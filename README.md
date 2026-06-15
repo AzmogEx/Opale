@@ -1,8 +1,7 @@
 # Opale
 
-Application personnelle de **gestion de patrimoine** — *belle, intelligente et
-privée*, auto-hébergée. Pas « où est parti mon argent ce mois-ci », mais
-**« combien je vaux, et où je vais »**.
+Application de **gestion de patrimoine** — *belle, intelligente et
+privée*, auto-hébergée.
 
 > Documents de référence : [`CAHIER-DES-CHARGES.md`](CAHIER-DES-CHARGES.md) ·
 > [`CONCEPTION.md`](CONCEPTION.md) · [`docs/DATA-MODEL.md`](docs/DATA-MODEL.md)
