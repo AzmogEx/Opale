@@ -1,0 +1,43 @@
+# Opale — pile de développement / homelab.
+# Lance PostgreSQL + le backend Go. En prod (Coolify), réutiliser la même image.
+
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: opale-db
+    environment:
+      POSTGRES_USER: ${OPALE_DB_USER:-opale}
+      POSTGRES_PASSWORD: ${OPALE_DB_PASSWORD:-opale}
+      POSTGRES_DB: ${OPALE_DB_NAME:-opale}
+    ports:
+      - "${OPALE_DB_PORT:-5432}:5432"
+    volumes:
+      - opale_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${OPALE_DB_USER:-opale}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  api:
+    build: ./backend
+    container_name: opale-api
+    environment:
+      OPALE_HTTP_ADDR: ":8080"
+      OPALE_ENV: ${OPALE_ENV:-dev}
+      OPALE_DB_HOST: db
+      OPALE_DB_PORT: "5432"
+      OPALE_DB_USER: ${OPALE_DB_USER:-opale}
+      OPALE_DB_PASSWORD: ${OPALE_DB_PASSWORD:-opale}
+      OPALE_DB_NAME: ${OPALE_DB_NAME:-opale}
+      OPALE_DB_SSLMODE: disable
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  opale_db:

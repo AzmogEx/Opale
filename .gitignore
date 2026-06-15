@@ -1,0 +1,25 @@
+# Secrets & environnement
+.env
+.env.*
+!.env.example
+
+# Go
+/backend/bin/
+/backend/tmp/
+*.test
+*.out
+coverage.*
+
+# Données locales / volumes
+/data/
+*.db
+*.sqlite
+
+# OS / éditeurs
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Build
+dist/
