@@ -313,3 +313,44 @@ func (s *Store) AssetLatestValue(ctx context.Context, profileID, assetID string)
 	}
 	return money.Cents(v), nil
 }
+
+// CategorySpend — total dépensé sur une catégorie (bilan mensuel, EF-062).
+type CategorySpend struct {
+	Name  string      `json:"name"`
+	Icon  string      `json:"icon"`
+	Total money.Cents `json:"total_cents"` // valeur positive
+}
+
+// SpendingByCategory — les plus gros postes de dépense d'un mois calendaire.
+func (s *Store) SpendingByCategory(ctx context.Context, profileID string, year int, month time.Month, limit int) ([]CategorySpend, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT COALESCE(c.name, 'Sans catégorie'), COALESCE(c.icon, 'questionmark.circle'),
+		       -SUM(t.amount_cents) AS total
+		FROM transactions t
+		LEFT JOIN categories c ON c.id = t.category_id
+		WHERE t.profile_id = $1
+		  AND t.amount_cents < 0
+		  AND t.occurred_on >= make_date($2, $3, 1)
+		  AND t.occurred_on < make_date($2, $3, 1) + interval '1 month'
+		GROUP BY 1, 2
+		ORDER BY total DESC
+		LIMIT $4`,
+		profileID, year, int(month), limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("SpendingByCategory: %w", err)
+	}
+	defer rows.Close()
+
+	var out []CategorySpend
+	for rows.Next() {
+		var cs CategorySpend
+		var total int64
+		if err := rows.Scan(&cs.Name, &cs.Icon, &total); err != nil {
+			return nil, fmt.Errorf("SpendingByCategory: %w", err)
+		}
+		cs.Total = money.Cents(total)
+		out = append(out, cs)
+	}
+	return out, rows.Err()
+}

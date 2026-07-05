@@ -15,6 +15,15 @@ type Config struct {
 	LogLevel   string
 	DatabaseURL string
 	SessionTTL time.Duration
+
+	// IA en cascade (P5, EIA-001→003).
+	// N2 — homelab : URL d'un serveur Ollama (vide = niveau indisponible).
+	OllamaURL   string
+	OllamaModel string
+	// N3 — cloud : clé API Anthropic (vide = niveau indisponible) et
+	// interrupteur global (EIA-022 : le cloud reste opt-in).
+	AnthropicAPIKey string
+	CloudAI         bool
 }
 
 // Load lit la configuration depuis les variables d'environnement (préfixe OPALE_),
@@ -44,6 +53,13 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("OPALE_SESSION_TTL invalide : %w", err)
 	}
 	c.SessionTTL = ttl
+
+	// IA en cascade — tout est optionnel : sans provider, l'app reste
+	// pleinement fonctionnelle sur le moteur déterministe (EIA-021).
+	c.OllamaURL = os.Getenv("OPALE_OLLAMA_URL")
+	c.OllamaModel = env("OPALE_OLLAMA_MODEL", "llama3.1:8b")
+	c.AnthropicAPIKey = os.Getenv("OPALE_ANTHROPIC_API_KEY")
+	c.CloudAI = env("OPALE_CLOUD_AI", "on") != "off"
 
 	return c, nil
 }

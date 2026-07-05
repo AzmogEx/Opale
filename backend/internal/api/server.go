@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/opale-app/opale/internal/ai"
 	"github.com/opale-app/opale/internal/config"
 	"github.com/opale-app/opale/internal/store"
 )
@@ -15,11 +16,22 @@ type Server struct {
 	store *store.Store
 	cfg   config.Config
 	log   *slog.Logger
+	ai    *ai.Router
 }
 
-// NewServer construit le serveur d'API.
+// NewServer construit le serveur d'API. La cascade IA est assemblée depuis
+// la configuration : chaque niveau absent est simplement ignoré (EIA-021).
 func NewServer(st *store.Store, cfg config.Config, log *slog.Logger) *Server {
-	return &Server{store: st, cfg: cfg, log: log}
+	var homelab, cloud ai.Provider
+	if cfg.OllamaURL != "" {
+		homelab = ai.NewOllama(cfg.OllamaURL, cfg.OllamaModel)
+		log.Info("ai: niveau N2 (homelab) configuré", "url", cfg.OllamaURL, "model", cfg.OllamaModel)
+	}
+	if cfg.AnthropicAPIKey != "" && cfg.CloudAI {
+		cloud = ai.NewAnthropic(cfg.AnthropicAPIKey)
+		log.Info("ai: niveau N3 (cloud Fable 5) configuré")
+	}
+	return &Server{store: st, cfg: cfg, log: log, ai: ai.NewRouter(homelab, cloud, log)}
 }
 
 // Routes construit le routeur HTTP complet.
@@ -47,6 +59,14 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/net-worth/history", s.handleNetWorthHistory)
 			r.Get("/projection", s.handleProjection)
 			r.Get("/categories", s.handleListCategories)
+
+			// Le cerveau (P5)
+			r.Get("/twin", s.handleTwin)
+			r.Get("/risks", s.handleRisks)
+			r.Post("/decision", s.handleDecision)
+			r.Get("/monthly-review", s.handleMonthlyReview)
+			r.Post("/assistant/ask", s.handleAssistantAsk)
+			r.Get("/assistant/status", s.handleAssistantStatus)
 
 			// Pilotage (P4)
 			r.Get("/recurring", s.handleRecurring)
