@@ -235,6 +235,90 @@ final class APIClient: Sendable {
         )
     }
 
+    // MARK: Flux (EF-020→022)
+
+    func listCategories() async throws -> [Category] {
+        let env: CategoriesEnvelope = try await request("GET", "/v1/categories")
+        return env.categories
+    }
+
+    func listTransactions(
+        from: String? = nil, to: String? = nil,
+        query: String? = nil, categoryID: String? = nil
+    ) async throws -> [Transaction] {
+        var items: [URLQueryItem] = []
+        if let from { items.append(URLQueryItem(name: "from", value: from)) }
+        if let to { items.append(URLQueryItem(name: "to", value: to)) }
+        if let query, !query.isEmpty { items.append(URLQueryItem(name: "q", value: query)) }
+        if let categoryID { items.append(URLQueryItem(name: "category_id", value: categoryID)) }
+        let env: TransactionsEnvelope = try await request("GET", "/v1/transactions/", query: items)
+        return env.transactions
+    }
+
+    struct CreateTransactionRequest: Encodable {
+        let assetID: String
+        let amountCents: Int64
+        let occurredOn: String
+        let label: String
+        let categoryID: String
+        let note: String
+        enum CodingKeys: String, CodingKey {
+            case assetID = "asset_id"
+            case amountCents = "amount_cents"
+            case occurredOn = "occurred_on"
+            case label
+            case categoryID = "category_id"
+            case note
+        }
+    }
+
+    func createTransaction(_ req: CreateTransactionRequest) async throws -> Transaction {
+        try await request("POST", "/v1/transactions/", body: req)
+    }
+
+    struct PatchTransactionRequest: Encodable {
+        var label: String?
+        var note: String?
+        var categoryID: String?
+        var applyToSimilar: Bool?
+        enum CodingKeys: String, CodingKey {
+            case label, note
+            case categoryID = "category_id"
+            case applyToSimilar = "apply_to_similar"
+        }
+    }
+
+    func updateTransaction(id: String, _ patch: PatchTransactionRequest) async throws -> Transaction {
+        try await request("PATCH", "/v1/transactions/\(id)/", body: patch)
+    }
+
+    func deleteTransaction(id: String) async throws {
+        let _: EmptyResponse = try await request("DELETE", "/v1/transactions/\(id)/")
+    }
+
+    func monthSummary(year: Int, month: Int) async throws -> MonthSummary {
+        try await request(
+            "GET", "/v1/transactions/summary",
+            query: [
+                URLQueryItem(name: "year", value: String(year)),
+                URLQueryItem(name: "month", value: String(month)),
+            ]
+        )
+    }
+
+    struct ImportCSVRequest: Encodable {
+        let assetID: String
+        let csv: String
+        enum CodingKeys: String, CodingKey {
+            case assetID = "asset_id"
+            case csv
+        }
+    }
+
+    func importCSV(assetID: String, csv: String) async throws -> ImportResult {
+        try await request("POST", "/v1/transactions/import", body: ImportCSVRequest(assetID: assetID, csv: csv))
+    }
+
     func listLiabilities() async throws -> [Liability] {
         let env: LiabilitiesEnvelope = try await request("GET", "/v1/liabilities/")
         return env.liabilities

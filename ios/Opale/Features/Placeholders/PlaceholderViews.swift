@@ -1,21 +1,7 @@
 import SwiftUI
 
-// Onglets à venir dans les paliers suivants (P2/P3/P5) — placeholders
+// Onglets à venir dans les paliers suivants (P5) — placeholders
 // volontairement sobres pour garder la navigation complète dès P1 (EF-003).
-
-/// Onglet Flux — transactions, enveloppes, calendrier (P3/P4).
-struct FlowsView: View {
-    var body: some View {
-        NavigationStack {
-            ContentUnavailableView(
-                "Flux",
-                systemImage: "arrow.left.arrow.right",
-                description: Text("Transactions, import bancaire et enveloppes arrivent au palier P3.")
-            )
-            .navigationTitle("Flux")
-        }
-    }
-}
 
 /// Onglet Assistant — IA patrimoniale, mode décision (P5).
 struct AssistantView: View {

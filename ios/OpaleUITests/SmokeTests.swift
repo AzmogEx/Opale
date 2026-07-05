@@ -60,5 +60,23 @@ final class SmokeTests: XCTestCase {
             .firstMatch
         XCTAssertTrue(freedom.waitForExistence(timeout: 10), "Le verdict de liberté doit s'afficher")
         XCTAssertTrue(app.sliders.firstMatch.exists, "Les curseurs d'hypothèses doivent exister")
+
+        // 6. Flux (P3, EF-020→022) : les mouvements importés en CSV s'affichent,
+        //    catégorisés, avec le résumé mensuel.
+        tabBar.buttons["Flux"].tap()
+        // Liste paresseuse : on cible une ligne du HAUT (les plus récentes),
+        // sans présumer du type d'élément exposé par SwiftUI.
+        let zzz = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS 'Zzz Boutique Mystere'"))
+            .firstMatch
+        XCTAssertTrue(zzz.waitForExistence(timeout: 10), "Les transactions importées doivent s'afficher")
+        let loisirs = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS 'Loisirs'"))
+            .firstMatch
+        XCTAssertTrue(loisirs.exists, "La catégorie apprise (Loisirs) doit être visible")
+        let revenus = app.staticTexts
+            .matching(NSPredicate(format: "label CONTAINS[c] 'revenus'"))
+            .firstMatch
+        XCTAssertTrue(revenus.exists, "Le résumé mensuel doit s'afficher")
     }
 }

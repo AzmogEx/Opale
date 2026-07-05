@@ -223,9 +223,63 @@ struct ProjectionResponse: Codable, Hashable, Sendable {
     }
 }
 
+// MARK: - Flux : catégories & transactions (EF-020→022)
+
+struct Category: Identifiable, Codable, Hashable, Sendable {
+    let id: String
+    var name: String
+    var icon: String
+
+    enum CodingKeys: String, CodingKey { case id, name, icon }
+}
+
+struct Transaction: Identifiable, Codable, Hashable, Sendable {
+    let id: String
+    var assetID: String
+    var amount: Cents
+    var occurredOn: Date
+    var label: String
+    var rawLabel: String
+    var categoryID: String?
+    var categoryName: String?
+    var note: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case assetID = "asset_id"
+        case amount = "amount_cents"
+        case occurredOn = "occurred_on"
+        case label
+        case rawLabel = "raw_label"
+        case categoryID = "category_id"
+        case categoryName = "category_name"
+        case note
+    }
+}
+
+struct MonthSummary: Codable, Hashable, Sendable {
+    var income: Cents
+    var expenses: Cents
+    var net: Cents
+
+    enum CodingKeys: String, CodingKey {
+        case income = "income_cents"
+        case expenses = "expenses_cents"
+        case net = "net_cents"
+    }
+}
+
+struct ImportResult: Codable, Hashable, Sendable {
+    var imported: Int
+    var duplicates: Int
+    var categorized: Int
+}
+
 // MARK: - Enveloppes de listes renvoyées par l'API
 
 struct AssetsEnvelope: Codable, Sendable { let assets: [Asset] }
 struct LiabilitiesEnvelope: Codable, Sendable { let liabilities: [Liability] }
 struct ValuationsEnvelope: Codable, Sendable { let valuations: [Valuation] }
 struct ProfilesEnvelope: Codable, Sendable { let profiles: [Profile] }
+struct CategoriesEnvelope: Codable, Sendable { let categories: [Category] }
+struct TransactionsEnvelope: Codable, Sendable { let transactions: [Transaction] }
