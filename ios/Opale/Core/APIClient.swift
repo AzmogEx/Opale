@@ -188,6 +188,25 @@ final class APIClient: Sendable {
         )
     }
 
+    /// Projection du patrimoine + date d'indépendance (EF-040/041).
+    /// Les calculs sont faits par le moteur déterministe du backend.
+    func projection(
+        monthlySavingsCents: Int64,
+        annualReturnBps: Int,
+        monthlyExpensesCents: Int64,
+        months: Int = 360
+    ) async throws -> ProjectionResponse {
+        try await request(
+            "GET", "/v1/projection",
+            query: [
+                URLQueryItem(name: "monthly_savings_cents", value: String(monthlySavingsCents)),
+                URLQueryItem(name: "annual_return_bps", value: String(annualReturnBps)),
+                URLQueryItem(name: "monthly_expenses_cents", value: String(monthlyExpensesCents)),
+                URLQueryItem(name: "months", value: String(months)),
+            ]
+        )
+    }
+
     func listAssets() async throws -> [Asset] {
         let env: AssetsEnvelope = try await request("GET", "/v1/assets/")
         return env.assets

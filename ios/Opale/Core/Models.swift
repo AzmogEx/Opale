@@ -179,6 +179,50 @@ struct NetWorthHistory: Codable, Hashable, Sendable {
     var currency: String
 }
 
+// MARK: - Projection (EF-040/041) — calculs du moteur déterministe backend
+
+struct ProjectionPoint: Codable, Hashable, Identifiable, Sendable {
+    var month: Int
+    var net: Cents
+
+    var id: Int { month }
+
+    enum CodingKeys: String, CodingKey {
+        case month
+        case net = "net_cents"
+    }
+}
+
+struct IndependenceResult: Codable, Hashable, Sendable {
+    var reached: Bool
+    var months: Int
+    var target: Cents
+
+    enum CodingKeys: String, CodingKey {
+        case reached, months
+        case target = "target_cents"
+    }
+}
+
+struct ProjectionResponse: Codable, Hashable, Sendable {
+    var startNet: Cents
+    var monthlySavings: Cents
+    var annualReturnBps: Int
+    var monthlyExpenses: Cents
+    var swrBps: Int
+    var points: [ProjectionPoint]
+    var independence: IndependenceResult
+
+    enum CodingKeys: String, CodingKey {
+        case startNet = "start_net_cents"
+        case monthlySavings = "monthly_savings_cents"
+        case annualReturnBps = "annual_return_bps"
+        case monthlyExpenses = "monthly_expenses_cents"
+        case swrBps = "swr_bps"
+        case points, independence
+    }
+}
+
 // MARK: - Enveloppes de listes renvoyées par l'API
 
 struct AssetsEnvelope: Codable, Sendable { let assets: [Asset] }

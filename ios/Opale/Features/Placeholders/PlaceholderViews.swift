@@ -17,20 +17,6 @@ struct FlowsView: View {
     }
 }
 
-/// Onglet Projection — indépendance financière, simulateur (P2).
-struct ProjectionView: View {
-    var body: some View {
-        NavigationStack {
-            ContentUnavailableView(
-                "Projection",
-                systemImage: "chart.line.uptrend.xyaxis",
-                description: Text("Date d'indépendance financière et simulateur arrivent au palier P2.")
-            )
-            .navigationTitle("Projection")
-        }
-    }
-}
-
 /// Onglet Assistant — IA patrimoniale, mode décision (P5).
 struct AssistantView: View {
     @Environment(SessionStore.self) private var session

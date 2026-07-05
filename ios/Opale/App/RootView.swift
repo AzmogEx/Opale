@@ -21,21 +21,41 @@ struct RootView: View {
 
 /// Les 5 onglets d'Opale : Accueil / Flux / Patrimoine / Projection / Assistant.
 struct MainTabView: View {
+    enum Section: Hashable {
+        case home, flows, wealth, projection, assistant
+    }
+
+    /// Onglet initial — surchargable par argument de lancement (debug/tests) :
+    /// `--tab projection` ouvre directement la Projection, etc.
+    @State private var selection: Section = {
+        if let idx = CommandLine.arguments.firstIndex(of: "--tab"),
+           idx + 1 < CommandLine.arguments.count {
+            switch CommandLine.arguments[idx + 1] {
+            case "flows": return .flows
+            case "wealth": return .wealth
+            case "projection": return .projection
+            case "assistant": return .assistant
+            default: break
+            }
+        }
+        return .home
+    }()
+
     var body: some View {
-        TabView {
-            Tab("Accueil", systemImage: "circle.hexagongrid.fill") {
+        TabView(selection: $selection) {
+            Tab("Accueil", systemImage: "circle.hexagongrid.fill", value: .home) {
                 HomeView()
             }
-            Tab("Flux", systemImage: "arrow.left.arrow.right") {
+            Tab("Flux", systemImage: "arrow.left.arrow.right", value: .flows) {
                 FlowsView()
             }
-            Tab("Patrimoine", systemImage: "building.columns.fill") {
+            Tab("Patrimoine", systemImage: "building.columns.fill", value: .wealth) {
                 WealthView()
             }
-            Tab("Projection", systemImage: "chart.line.uptrend.xyaxis") {
+            Tab("Projection", systemImage: "chart.line.uptrend.xyaxis", value: .projection) {
                 ProjectionView()
             }
-            Tab("Assistant", systemImage: "sparkles") {
+            Tab("Assistant", systemImage: "sparkles", value: .assistant) {
                 AssistantView()
             }
         }

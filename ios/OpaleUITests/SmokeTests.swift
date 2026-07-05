@@ -47,5 +47,18 @@ final class SmokeTests: XCTestCase {
             app.staticTexts["Compte courant BNP"].waitForExistence(timeout: 10),
             "L'actif créé en P0 doit être listé"
         )
+
+        // 5. Projection (P2, EF-040/041) : la date d'indépendance et les
+        //    hypothèses s'affichent, calculées par le moteur backend.
+        tabBar.buttons["Projection"].tap()
+        let independence = app.staticTexts
+            .matching(NSPredicate(format: "label CONTAINS[c] 'indépendance'"))
+            .firstMatch
+        XCTAssertTrue(independence.waitForExistence(timeout: 10), "Le héro Indépendance doit s'afficher")
+        let freedom = app.staticTexts
+            .matching(NSPredicate(format: "label CONTAINS[c] 'libre en' OR label CONTAINS[c] 'déjà libre' OR label CONTAINS[c] 'hors d'"))
+            .firstMatch
+        XCTAssertTrue(freedom.waitForExistence(timeout: 10), "Le verdict de liberté doit s'afficher")
+        XCTAssertTrue(app.sliders.firstMatch.exists, "Les curseurs d'hypothèses doivent exister")
     }
 }
