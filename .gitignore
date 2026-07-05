@@ -23,3 +23,8 @@ coverage.*
 
 # Build
 dist/
+
+# iOS — générés par XcodeGen / Xcode
+/ios/Opale.xcodeproj/
+/ios/Opale/Info.plist
+/ios/build/

@@ -1,0 +1,65 @@
+# Opale iOS — définition du projet Xcode (générée par XcodeGen).
+# `xcodegen generate` depuis ce dossier produit Opale.xcodeproj.
+name: Opale
+options:
+  bundleIdPrefix: app.opale
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    # Isolation MainActor par défaut (modèle des templates Xcode 26) :
+    # simplifie la concurrence pour une app UI.
+    SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
+    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: 0.1.0
+
+targets:
+  Opale:
+    type: application
+    platform: iOS
+    sources:
+      - Opale
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.opale.ios
+        TARGETED_DEVICE_FAMILY: "1"          # iPhone d'abord (P1)
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+    info:
+      path: Opale/Info.plist
+      properties:
+        CFBundleDisplayName: Opale
+        UILaunchScreen: {}
+        # Autorise l'API locale (simulateur → localhost, homelab en LAN).
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+
+  OpaleUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - OpaleUITests
+    dependencies:
+      - target: Opale
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.opale.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        # XCTestCase impose des init nonisolated — pas d'isolation par défaut ici.
+        SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+
+schemes:
+  Opale:
+    build:
+      targets:
+        Opale: all
+        OpaleUITests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - OpaleUITests
