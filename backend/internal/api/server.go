@@ -46,6 +46,18 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/net-worth", s.handleNetWorth)
 			r.Get("/net-worth/history", s.handleNetWorthHistory)
 			r.Get("/projection", s.handleProjection)
+			r.Get("/categories", s.handleListCategories)
+
+			r.Route("/transactions", func(r chi.Router) {
+				r.Get("/", s.handleListTransactions)
+				r.Post("/", s.handleCreateTransaction)
+				r.Get("/summary", s.handleMonthSummary)
+				r.Post("/import", s.handleImportCSV)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Patch("/", s.handleUpdateTransaction)
+					r.Delete("/", s.handleDeleteTransaction)
+				})
+			})
 
 			r.Route("/assets", func(r chi.Router) {
 				r.Get("/", s.handleListAssets)
