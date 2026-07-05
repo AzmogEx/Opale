@@ -44,6 +44,7 @@ func (s *Server) Routes() http.Handler {
 			r.Post("/auth/logout", s.handleLogout)
 			r.Get("/me", s.handleMe)
 			r.Get("/net-worth", s.handleNetWorth)
+			r.Get("/net-worth/history", s.handleNetWorthHistory)
 
 			r.Route("/assets", func(r chi.Router) {
 				r.Get("/", s.handleListAssets)
