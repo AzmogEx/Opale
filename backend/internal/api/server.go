@@ -45,6 +45,7 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/me", s.handleMe)
 			r.Get("/net-worth", s.handleNetWorth)
 			r.Get("/net-worth/history", s.handleNetWorthHistory)
+			r.Get("/projection", s.handleProjection)
 
 			r.Route("/assets", func(r chi.Router) {
 				r.Get("/", s.handleListAssets)
