@@ -401,6 +401,125 @@ struct OpaleAlert: Codable, Hashable, Identifiable, Sendable {
     var id: String { kind + title }
 }
 
+// MARK: - Le cerveau (P5)
+
+/// Un risque détecté par le radar (EF-061).
+struct Risk: Codable, Hashable, Identifiable, Sendable {
+    var id: String
+    var title: String
+    var severity: String // info | warning | critical
+    var detail: String
+}
+
+/// État de la cascade IA (EIA-021/022).
+struct AssistantStatus: Codable, Hashable, Sendable {
+    var homelabAvailable: Bool
+    var cloudConfigured: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case homelabAvailable = "homelab_available"
+        case cloudConfigured = "cloud_configured"
+    }
+}
+
+/// Réponse de l'assistant (EF-050/051).
+struct AskResponse: Codable, Hashable, Sendable {
+    var answer: String
+    var tier: String // "n2" | "n3" | "" (repli moteur)
+}
+
+/// Un scénario du Mode Décision (EF-052).
+struct DecisionScenario: Codable, Hashable, Identifiable, Sendable {
+    var name: String
+    var returnBps: Int
+    var in5y: Cents
+    var in10y: Cents
+    var delta5y: Cents
+    var delta10y: Cents
+    var baselineReached: Bool
+    var decisionReached: Bool
+    var delayMonths: Int
+
+    var id: String { name }
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case returnBps = "return_bps"
+        case in5y = "in_5y_cents"
+        case in10y = "in_10y_cents"
+        case delta5y = "delta_5y_cents"
+        case delta10y = "delta_10y_cents"
+        case baselineReached = "baseline_reached"
+        case decisionReached = "decision_reached"
+        case delayMonths = "delay_months"
+    }
+}
+
+/// Le verdict complet du Mode Décision (chiffres du moteur).
+struct DecisionImpact: Codable, Hashable, Sendable {
+    var netWorthAfter: Cents
+    var affordableCash: Bool
+    var savingsAfter: Cents
+    var riskLevel: String // faible | modéré | élevé
+    var recommendation: String
+    var scenarios: [DecisionScenario]
+
+    enum CodingKeys: String, CodingKey {
+        case netWorthAfter = "net_worth_after_cents"
+        case affordableCash = "affordable_cash"
+        case savingsAfter = "savings_after_cents"
+        case riskLevel = "risk_level"
+        case recommendation, scenarios
+    }
+}
+
+/// Réponse complète de POST /v1/decision.
+struct DecisionResponse: Codable, Hashable, Sendable {
+    var label: String
+    var impact: DecisionImpact
+    var narrative: String
+    var narrativeTier: String
+
+    enum CodingKeys: String, CodingKey {
+        case label, impact, narrative
+        case narrativeTier = "narrative_tier"
+    }
+}
+
+/// Un poste de dépense du bilan mensuel.
+struct CategorySpend: Codable, Hashable, Identifiable, Sendable {
+    var name: String
+    var icon: String
+    var total: Cents
+
+    var id: String { name }
+
+    enum CodingKeys: String, CodingKey {
+        case name, icon
+        case total = "total_cents"
+    }
+}
+
+/// Bilan mensuel intelligent (EF-062).
+struct MonthlyReview: Codable, Hashable, Sendable {
+    var year: Int
+    var month: Int
+    var summary: MonthSummary
+    var savingsRateBps: Int
+    var topCategories: [CategorySpend]?
+    var healthScore: Int
+    var narrative: String
+    var narrativeTier: String
+
+    enum CodingKeys: String, CodingKey {
+        case year, month, summary, narrative
+        case savingsRateBps = "savings_rate_bps"
+        case topCategories = "top_categories"
+        case healthScore = "health_score"
+        case narrativeTier = "narrative_tier"
+    }
+}
+
 // MARK: - Enveloppes de listes renvoyées par l'API
 
 struct AssetsEnvelope: Codable, Sendable { let assets: [Asset] }

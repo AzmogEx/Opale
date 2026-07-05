@@ -103,5 +103,26 @@ final class SmokeTests: XCTestCase {
             .matching(NSPredicate(format: "label CONTAINS[c] 'dépassée'"))
             .firstMatch
         XCTAssertTrue(alerte.exists, "L'alerte d'enveloppe dépassée doit s'afficher")
+
+        // 10. Assistant (P5, EF-050/061) : le radar de risques s'affiche et
+        //     une question reçoit une réponse (repli moteur, IA hors ligne).
+        tabBar.buttons["Assistant"].tap()
+        let radar = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS[c] 'radar de risques'"))
+            .firstMatch
+        XCTAssertTrue(radar.waitForExistence(timeout: 10), "Le radar de risques doit s'afficher")
+        let revenuUnique = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS[c] 'revenu unique'"))
+            .firstMatch
+        XCTAssertTrue(revenuUnique.exists, "Le risque « revenu unique » doit être détecté")
+
+        let suggestion = app.buttons["Comment va mon épargne ?"]
+        XCTAssertTrue(suggestion.waitForExistence(timeout: 5), "Les suggestions doivent s'afficher")
+        suggestion.tap()
+        // Sans IA configurée, la réponse est le repli déterministe du moteur.
+        let reponse = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS[c] 'calculé par le moteur'"))
+            .firstMatch
+        XCTAssertTrue(reponse.waitForExistence(timeout: 15), "La réponse (repli moteur) doit s'afficher")
     }
 }

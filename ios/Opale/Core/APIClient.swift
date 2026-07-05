@@ -433,4 +433,55 @@ final class APIClient: Sendable {
             body: AddValuationRequest(valueCents: valueCents, asOf: asOf)
         )
     }
+
+    // MARK: - Le cerveau (P5)
+
+    func assistantStatus() async throws -> AssistantStatus {
+        try await request("GET", "/v1/assistant/status")
+    }
+
+    struct AskRequest: Encodable {
+        let question: String
+        let allowCloud: Bool
+        enum CodingKeys: String, CodingKey {
+            case question
+            case allowCloud = "allow_cloud"
+        }
+    }
+
+    func ask(question: String, allowCloud: Bool = false) async throws -> AskResponse {
+        try await request("POST", "/v1/assistant/ask",
+                          body: AskRequest(question: question, allowCloud: allowCloud))
+    }
+
+    func risks() async throws -> [Risk] {
+        struct Env: Decodable { let risks: [Risk]? }
+        let env: Env = try await request("GET", "/v1/risks")
+        return env.risks ?? []
+    }
+
+    struct DecisionRequest: Encodable {
+        let label: String
+        let oneTimeCostCents: Int64
+        let monthlyCostCents: Int64
+        let allowCloud: Bool
+        enum CodingKeys: String, CodingKey {
+            case label
+            case oneTimeCostCents = "one_time_cost_cents"
+            case monthlyCostCents = "monthly_cost_cents"
+            case allowCloud = "allow_cloud"
+        }
+    }
+
+    func evaluateDecision(_ req: DecisionRequest) async throws -> DecisionResponse {
+        try await request("POST", "/v1/decision", body: req)
+    }
+
+    func monthlyReview(year: Int? = nil, month: Int? = nil, allowCloud: Bool = false) async throws -> MonthlyReview {
+        var query: [URLQueryItem] = []
+        if let year { query.append(URLQueryItem(name: "year", value: String(year))) }
+        if let month { query.append(URLQueryItem(name: "month", value: String(month))) }
+        if allowCloud { query.append(URLQueryItem(name: "allow_cloud", value: "true")) }
+        return try await request("GET", "/v1/monthly-review", query: query)
+    }
 }
