@@ -48,6 +48,24 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/projection", s.handleProjection)
 			r.Get("/categories", s.handleListCategories)
 
+			// Pilotage (P4)
+			r.Get("/recurring", s.handleRecurring)
+			r.Get("/cashflow", s.handleCashflow)
+			r.Get("/health-score", s.handleHealthScore)
+			r.Get("/alerts", s.handleAlerts)
+
+			r.Route("/envelopes", func(r chi.Router) {
+				r.Get("/", s.handleEnvelopeStatuses)
+				r.Put("/", s.handleUpsertEnvelope)
+				r.Delete("/{id}", s.handleDeleteEnvelope)
+			})
+
+			r.Route("/goals", func(r chi.Router) {
+				r.Get("/", s.handleListGoals)
+				r.Post("/", s.handleCreateGoal)
+				r.Delete("/{id}", s.handleDeleteGoal)
+			})
+
 			r.Route("/transactions", func(r chi.Router) {
 				r.Get("/", s.handleListTransactions)
 				r.Post("/", s.handleCreateTransaction)
