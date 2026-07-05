@@ -319,6 +319,93 @@ final class APIClient: Sendable {
         try await request("POST", "/v1/transactions/import", body: ImportCSVRequest(assetID: assetID, csv: csv))
     }
 
+    // MARK: Pilotage (P4)
+
+    func envelopeStatuses(year: Int, month: Int) async throws -> [EnvelopeStatus] {
+        struct Env: Decodable { let envelopes: [EnvelopeStatus] }
+        let env: Env = try await request(
+            "GET", "/v1/envelopes/",
+            query: [
+                URLQueryItem(name: "year", value: String(year)),
+                URLQueryItem(name: "month", value: String(month)),
+            ]
+        )
+        return env.envelopes
+    }
+
+    struct UpsertEnvelopeRequest: Encodable {
+        let categoryID: String
+        let budgetCents: Int64
+        enum CodingKeys: String, CodingKey {
+            case categoryID = "category_id"
+            case budgetCents = "monthly_budget_cents"
+        }
+    }
+
+    func upsertEnvelope(categoryID: String, budgetCents: Int64) async throws {
+        struct Env: Decodable { let id: String }
+        let _: Env = try await request(
+            "PUT", "/v1/envelopes/",
+            body: UpsertEnvelopeRequest(categoryID: categoryID, budgetCents: budgetCents)
+        )
+    }
+
+    func deleteEnvelope(id: String) async throws {
+        let _: EmptyResponse = try await request("DELETE", "/v1/envelopes/\(id)")
+    }
+
+    func recurringFlows() async throws -> [RecurringFlow] {
+        struct Env: Decodable { let recurring: [RecurringFlow] }
+        let env: Env = try await request("GET", "/v1/recurring")
+        return env.recurring
+    }
+
+    func cashflow(days: Int = 30) async throws -> CashProjection {
+        try await request(
+            "GET", "/v1/cashflow",
+            query: [URLQueryItem(name: "days", value: String(days))]
+        )
+    }
+
+    func healthScore() async throws -> HealthScore {
+        try await request("GET", "/v1/health-score")
+    }
+
+    func alerts() async throws -> [OpaleAlert] {
+        struct Env: Decodable { let alerts: [OpaleAlert] }
+        let env: Env = try await request("GET", "/v1/alerts")
+        return env.alerts
+    }
+
+    func listGoals() async throws -> [GoalStatus] {
+        struct Env: Decodable { let goals: [GoalStatus] }
+        let env: Env = try await request("GET", "/v1/goals/")
+        return env.goals
+    }
+
+    struct CreateGoalRequest: Encodable {
+        let name: String
+        let icon: String
+        let targetCents: Int64
+        let targetDate: String
+        let assetID: String
+        enum CodingKeys: String, CodingKey {
+            case name, icon
+            case targetCents = "target_cents"
+            case targetDate = "target_date"
+            case assetID = "asset_id"
+        }
+    }
+
+    func createGoal(_ req: CreateGoalRequest) async throws {
+        struct Env: Decodable { let id: String }
+        let _: Env = try await request("POST", "/v1/goals/", body: req)
+    }
+
+    func deleteGoal(id: String) async throws {
+        let _: EmptyResponse = try await request("DELETE", "/v1/goals/\(id)")
+    }
+
     func listLiabilities() async throws -> [Liability] {
         let env: LiabilitiesEnvelope = try await request("GET", "/v1/liabilities/")
         return env.liabilities

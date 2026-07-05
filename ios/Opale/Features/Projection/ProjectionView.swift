@@ -41,6 +41,7 @@ struct ProjectionView: View {
                                     .frame(minHeight: 200)
                             }
                             assumptionsCard
+                            GoalsSection()
                         }
                         .padding(.horizontal)
                         .padding(.bottom, 24)

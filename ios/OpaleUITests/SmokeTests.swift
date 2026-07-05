@@ -78,5 +78,30 @@ final class SmokeTests: XCTestCase {
             .matching(NSPredicate(format: "label CONTAINS[c] 'revenus'"))
             .firstMatch
         XCTAssertTrue(revenus.exists, "Le résumé mensuel doit s'afficher")
+
+        // 7. Enveloppes (P4, EF-028) : la jauge Restaurants (dépassée) s'affiche.
+        app.buttons["Enveloppes"].tap()
+        let restaurants = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS 'Restaurants'"))
+            .firstMatch
+        XCTAssertTrue(restaurants.waitForExistence(timeout: 10), "L'enveloppe Restaurants doit s'afficher")
+
+        // 8. À venir (P4, EF-025/027) : le cash projeté s'affiche.
+        app.buttons["À venir"].tap()
+        let cashPrevu = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS[c] 'cash prévu'"))
+            .firstMatch
+        XCTAssertTrue(cashPrevu.waitForExistence(timeout: 10), "Le cashflow futur doit s'afficher")
+
+        // 9. Accueil (P4, EF-015/053) : le score de santé et l'alerte d'enveloppe.
+        tabBar.buttons["Accueil"].tap()
+        let sante = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS[c] 'santé financière'"))
+            .firstMatch
+        XCTAssertTrue(sante.waitForExistence(timeout: 10), "La carte santé financière doit s'afficher")
+        let alerte = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS[c] 'dépassée'"))
+            .firstMatch
+        XCTAssertTrue(alerte.exists, "L'alerte d'enveloppe dépassée doit s'afficher")
     }
 }

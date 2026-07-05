@@ -17,25 +17,39 @@ struct FlowsView: View {
     @State private var showManualForm = false
     @State private var showImport = false
 
+    /// Sous-vues de l'onglet Flux (EF-020 / EF-028 / EF-025-027).
+    enum Segment: String, CaseIterable, Identifiable {
+        case movements = "Mouvements"
+        case envelopes = "Enveloppes"
+        case upcoming = "À venir"
+        var id: String { rawValue }
+    }
+
+    @State private var segment: Segment = .movements
+
     private var monthKey: String {
         month.formatted(.iso8601.year().month())
     }
 
     var body: some View {
         NavigationStack {
-            List {
-                monthHeader
-                if let summary {
-                    summarySection(summary)
+            VStack(spacing: 0) {
+                Picker("Vue", selection: $segment) {
+                    ForEach(Segment.allCases) { s in
+                        Text(s.rawValue).tag(s)
+                    }
                 }
-                transactionSections
-                if let errorMessage {
-                    Text(errorMessage).foregroundStyle(OpaleTheme.loss)
+                .pickerStyle(.segmented)
+                .padding(.horizontal)
+                .padding(.bottom, 4)
+
+                switch segment {
+                case .movements: movementsList
+                case .envelopes: EnvelopesView()
+                case .upcoming: UpcomingView()
                 }
             }
-            .listStyle(.insetGrouped)
             .navigationTitle("Flux")
-            .searchable(text: $searchText, prompt: "Rechercher un mouvement")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
@@ -73,6 +87,23 @@ struct FlowsView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Segment Mouvements (EF-020)
+
+    private var movementsList: some View {
+        List {
+            monthHeader
+            if let summary {
+                summarySection(summary)
+            }
+            transactionSections
+            if let errorMessage {
+                Text(errorMessage).foregroundStyle(OpaleTheme.loss)
+            }
+        }
+        .listStyle(.insetGrouped)
+        .searchable(text: $searchText, prompt: "Rechercher un mouvement")
     }
 
     // MARK: - Navigation de mois

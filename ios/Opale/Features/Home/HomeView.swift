@@ -19,6 +19,8 @@ struct HomeView: View {
         var netWorth: NetWorth
         var history: NetWorthHistory
         var cash: Cents
+        var health: HealthScore?
+        var alerts: [OpaleAlert] = []
 
         /// Variation depuis le point précédent de l'historique (EF-012).
         /// Affichage uniquement — le calcul de référence reste côté backend.
@@ -82,9 +84,13 @@ struct HomeView: View {
             ScrollView {
                 GlassEffectContainer(spacing: 16) {
                     VStack(spacing: 16) {
+                        alertsBanner(snapshot.alerts)
                         heroCard(snapshot)
                         chartCard(snapshot)
                         statsRow(snapshot)
+                        if let health = snapshot.health {
+                            healthCard(health)
+                        }
                     }
                     .padding(.horizontal)
                     .padding(.bottom, 24)
@@ -238,6 +244,88 @@ struct HomeView: View {
         points.min { abs($0.asOf.timeIntervalSince(date)) < abs($1.asOf.timeIntervalSince(date)) }
     }
 
+    // MARK: - Alertes (EF-053)
+
+    @ViewBuilder
+    private func alertsBanner(_ alerts: [OpaleAlert]) -> some View {
+        ForEach(alerts) { alert in
+            GlassCard(tint: alert.severity == "critical" ? OpaleTheme.loss : .orange) {
+                HStack(spacing: 12) {
+                    Image(systemName: alert.severity == "critical"
+                        ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
+                        .font(.title3)
+                        .foregroundStyle(alert.severity == "critical" ? OpaleTheme.loss : .orange)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(alert.title).font(.subheadline.weight(.semibold))
+                        Text(alert.detail).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Score de santé (EF-015)
+
+    @State private var showHealthDetail = false
+
+    private func healthCard(_ health: HealthScore) -> some View {
+        Button {
+            showHealthDetail = true
+        } label: {
+            GlassCard(interactive: true) {
+                HStack(spacing: 16) {
+                    scoreGauge(health.score)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Santé financière")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .textCase(.uppercase)
+                        Text(healthVerdict(health.score))
+                            .font(.headline)
+                        if let weakest = health.components.min(by: {
+                            $0.max == 0 ? false : ($1.max == 0 ? true :
+                                Double($0.score) / Double($0.max) < Double($1.score) / Double($1.max))
+                        }) {
+                            Text("Point faible : \(weakest.name.lowercased())")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .sheet(isPresented: $showHealthDetail) {
+            HealthDetailSheet(health: health)
+                .presentationDetents([.medium, .large])
+        }
+    }
+
+    private func scoreGauge(_ score: Int) -> some View {
+        Gauge(value: Double(score), in: 0...100) {
+            EmptyView()
+        } currentValueLabel: {
+            Text("\(score)")
+                .font(.system(.title3, design: .rounded).bold())
+        }
+        .gaugeStyle(.accessoryCircularCapacity)
+        .tint(score >= 70 ? OpaleTheme.gain : score >= 40 ? .orange : OpaleTheme.loss)
+    }
+
+    private func healthVerdict(_ score: Int) -> String {
+        switch score {
+        case 85...: "Excellente"
+        case 70..<85: "Solide"
+        case 50..<70: "Correcte"
+        case 30..<50: "Fragile"
+        default: "En difficulté"
+        }
+    }
+
     // MARK: - Cartes de synthèse (EF-014)
 
     private func statsRow(_ snapshot: Snapshot) -> some View {
@@ -269,6 +357,8 @@ struct HomeView: View {
             async let netWorth = session.api.netWorth()
             async let history = session.api.netWorthHistory(months: 12)
             async let assets = session.api.listAssets()
+            async let health = session.api.healthScore()
+            async let alerts = session.api.alerts()
 
             // Cash disponible (EF-014) : somme des comptes courants + livrets.
             // Somme d'affichage en entiers ; le patrimoine net, lui, vient du backend.
@@ -280,10 +370,49 @@ struct HomeView: View {
             viewState = .loaded(Snapshot(
                 netWorth: try await netWorth,
                 history: try await history,
-                cash: cash
+                cash: cash,
+                health: try? await health,
+                alerts: (try? await alerts) ?? []
             ))
         } catch {
             viewState = .error(error.localizedDescription)
+        }
+    }
+}
+
+/// Détail du score : les cinq composantes et leurs verdicts (EF-015).
+private struct HealthDetailSheet: View {
+    let health: HealthScore
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(health.components) { c in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(c.name).font(.body.weight(.medium))
+                            Spacer()
+                            Text("\(c.score)/\(c.max)")
+                                .font(.callout.weight(.bold))
+                                .monospacedDigit()
+                        }
+                        ProgressView(value: Double(c.score), total: Double(c.max))
+                            .tint(c.score * 2 >= c.max ? OpaleTheme.gain : OpaleTheme.loss)
+                        Text(c.comment)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+            .navigationTitle("Santé financière — \(health.score)/100")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("OK") { dismiss() }
+                }
+            }
         }
     }
 }

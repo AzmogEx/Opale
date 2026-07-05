@@ -275,6 +275,132 @@ struct ImportResult: Codable, Hashable, Sendable {
     var categorized: Int
 }
 
+// MARK: - Pilotage (P4) : enveloppes, récurrents, cashflow, score, objectifs
+
+struct EnvelopeStatus: Identifiable, Codable, Hashable, Sendable {
+    let id: String
+    var categoryID: String
+    var categoryName: String
+    var categoryIcon: String
+    var budget: Cents
+    var spent: Cents
+    var remaining: Cents
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case categoryID = "category_id"
+        case categoryName = "category_name"
+        case categoryIcon = "category_icon"
+        case budget = "monthly_budget_cents"
+        case spent = "spent_cents"
+        case remaining = "remaining_cents"
+    }
+}
+
+struct RecurringFlow: Identifiable, Codable, Hashable, Sendable {
+    var merchantKey: String
+    var label: String
+    var amount: Cents
+    var intervalDays: Int
+    var periodicity: String
+    var nextDate: Date
+    var active: Bool
+
+    var id: String { merchantKey }
+
+    var periodicityLabel: String {
+        switch periodicity {
+        case "weekly": "Hebdomadaire"
+        case "monthly": "Mensuel"
+        case "quarterly": "Trimestriel"
+        case "yearly": "Annuel"
+        default: periodicity
+        }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case merchantKey = "merchant_key"
+        case label
+        case amount = "amount_cents"
+        case intervalDays = "interval_days"
+        case periodicity
+        case nextDate = "next_date"
+        case active
+    }
+}
+
+struct UpcomingFlow: Codable, Hashable, Identifiable, Sendable {
+    var date: Date
+    var label: String
+    var amount: Cents
+
+    var id: String { "\(date.timeIntervalSince1970)-\(label)" }
+
+    enum CodingKeys: String, CodingKey {
+        case date, label
+        case amount = "amount_cents"
+    }
+}
+
+struct CashProjection: Codable, Hashable, Sendable {
+    var startCash: Cents
+    var endCash: Cents
+    var until: Date
+    var upcoming: [UpcomingFlow]
+
+    enum CodingKeys: String, CodingKey {
+        case startCash = "start_cash_cents"
+        case endCash = "end_cash_cents"
+        case until, upcoming
+    }
+}
+
+struct HealthComponent: Codable, Hashable, Identifiable, Sendable {
+    var name: String
+    var score: Int
+    var max: Int
+    var comment: String
+
+    var id: String { name }
+}
+
+struct HealthScore: Codable, Hashable, Sendable {
+    var score: Int
+    var components: [HealthComponent]
+}
+
+struct GoalStatus: Identifiable, Codable, Hashable, Sendable {
+    let id: String
+    var name: String
+    var icon: String
+    var target: Cents
+    var targetDate: Date?
+    var assetID: String?
+    var assetName: String?
+    var progress: Cents
+    var percent: Int
+    var onTrack: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, icon, percent
+        case target = "target_cents"
+        case targetDate = "target_date"
+        case assetID = "asset_id"
+        case assetName = "asset_name"
+        case progress = "progress_cents"
+        case onTrack = "on_track"
+    }
+}
+
+struct OpaleAlert: Codable, Hashable, Identifiable, Sendable {
+    var kind: String
+    var severity: String
+    var title: String
+    var detail: String
+
+    var id: String { kind + title }
+}
+
 // MARK: - Enveloppes de listes renvoyées par l'API
 
 struct AssetsEnvelope: Codable, Sendable { let assets: [Asset] }
