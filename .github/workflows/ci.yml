@@ -12,6 +12,21 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    # PostgreSQL réel pour les tests d'intégration du store (audit).
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: opale
+          POSTGRES_PASSWORD: opale
+          POSTGRES_DB: opale_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U opale"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -27,7 +42,9 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Tests
+      - name: Tests (unitaires + intégration store)
+        env:
+          OPALE_TEST_DATABASE_URL: postgres://opale:opale@localhost:5432/opale_test?sslmode=disable
         run: go test -race ./...
 
       - name: Build
