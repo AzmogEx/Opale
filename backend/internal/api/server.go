@@ -158,6 +158,7 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/cashflow", s.handleCashflow)
 			r.Get("/health-score", s.handleHealthScore)
 			r.Get("/analytics", s.handleAnalytics)
+			r.Get("/subscriptions", s.handleSubscriptions)
 			r.Get("/alerts", s.handleAlerts)
 
 			r.Route("/envelopes", func(r chi.Router) {

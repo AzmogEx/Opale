@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -414,5 +415,81 @@ func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
 		"previous":        prevSummary,
 		"categories":      categories,
 		"top_merchants":   merchants,
+	})
+}
+
+// ── Abonnements (gestionnaire d'abonnements) ──────────────────────────────────
+
+// subscriptionStatus — un abonnement détecté + son poids sur la liberté.
+type subscriptionStatus struct {
+	engine.RecurringFlow
+	// Coût mensualisé (|montant| × 30 / intervalle).
+	MonthlyCost money.Cents `json:"monthly_cost_cents"`
+	YearlyCost  money.Cents `json:"yearly_cost_cents"`
+	// Résilier cet abonnement avance la liberté de N mois (0 si inconnu).
+	FreedomGainMonths int `json:"freedom_gain_months"`
+}
+
+// handleSubscriptions liste les prélèvements récurrents actifs avec leur
+// coût réel et le gain d'indépendance si on les résilie — LE chiffre qui
+// fait réfléchir, calculé par le moteur (EIA-040).
+func (s *Server) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
+	p := profileFromContext(r.Context())
+
+	flows, err := s.detectRecurring(r, p.ID)
+	if err != nil {
+		s.storeErr(w, err, "subscriptions: recurring")
+		return
+	}
+
+	// La situation de référence (mêmes hypothèses que le twin).
+	snap, err := s.buildTwin(r, p.ID)
+	if err != nil {
+		s.storeErr(w, err, "subscriptions: twin")
+		return
+	}
+	var baseMonths int
+	baseReached := false
+	if snap.MonthlyExpenses > 0 {
+		if base, err := engine.ComputeIndependence(snap.NetWorth, snap.MonthlySavings,
+			snap.MonthlyExpenses, twinReturnBps, twinSwrBps); err == nil && base.Reached {
+			baseMonths, baseReached = base.Months, true
+		}
+	}
+
+	var out []subscriptionStatus
+	var totalMonthly int64
+	for _, f := range flows {
+		if !f.Active || f.Amount >= 0 || f.IntervalDays <= 0 {
+			continue
+		}
+		monthly := -int64(f.Amount) * 30 / int64(f.IntervalDays)
+		st := subscriptionStatus{
+			RecurringFlow: f,
+			MonthlyCost:   money.Cents(monthly),
+			YearlyCost:    money.Cents(monthly * 12),
+		}
+		// Résilier = épargner `monthly` de plus ET dépenser autant de moins.
+		if baseReached && snap.MonthlyExpenses > money.Cents(monthly) {
+			if after, err := engine.ComputeIndependence(
+				snap.NetWorth,
+				snap.MonthlySavings+money.Cents(monthly),
+				snap.MonthlyExpenses-money.Cents(monthly),
+				twinReturnBps, twinSwrBps,
+			); err == nil && after.Reached && baseMonths > after.Months {
+				st.FreedomGainMonths = baseMonths - after.Months
+			}
+		}
+		totalMonthly += monthly
+		out = append(out, st)
+	}
+
+	// Les plus chers d'abord.
+	sort.Slice(out, func(i, j int) bool { return out[i].MonthlyCost > out[j].MonthlyCost })
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"subscriptions":       out,
+		"total_monthly_cents": totalMonthly,
+		"total_yearly_cents":  totalMonthly * 12,
 	})
 }
