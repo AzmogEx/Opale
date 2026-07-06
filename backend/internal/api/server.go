@@ -9,6 +9,7 @@ import (
 	"github.com/opale-app/opale/internal/ai"
 	"github.com/opale-app/opale/internal/config"
 	"github.com/opale-app/opale/internal/store"
+	"github.com/opale-app/opale/internal/vault"
 )
 
 // Server porte les dépendances des handlers HTTP.
@@ -17,6 +18,7 @@ type Server struct {
 	cfg   config.Config
 	log   *slog.Logger
 	ai    *ai.Router
+	vault *vault.Vault // nil = coffre-fort désactivé (EF-064)
 }
 
 // NewServer construit le serveur d'API. La cascade IA est assemblée depuis
@@ -31,7 +33,19 @@ func NewServer(st *store.Store, cfg config.Config, log *slog.Logger) *Server {
 		cloud = ai.NewAnthropic(cfg.AnthropicAPIKey)
 		log.Info("ai: niveau N3 (cloud Fable 5) configuré")
 	}
-	return &Server{store: st, cfg: cfg, log: log, ai: ai.NewRouter(homelab, cloud, log)}
+
+	var v *vault.Vault
+	if cfg.VaultKey != "" {
+		var err error
+		if v, err = vault.New(cfg.VaultKey); err != nil {
+			log.Error("vault: clé invalide — coffre-fort désactivé", "err", err)
+			v = nil
+		} else {
+			log.Info("vault: coffre-fort activé (AES-256-GCM)")
+		}
+	}
+
+	return &Server{store: st, cfg: cfg, log: log, ai: ai.NewRouter(homelab, cloud, log), vault: v}
 }
 
 // Routes construit le routeur HTTP complet.
@@ -67,6 +81,26 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/monthly-review", s.handleMonthlyReview)
 			r.Post("/assistant/ask", s.handleAssistantAsk)
 			r.Get("/assistant/status", s.handleAssistantStatus)
+
+			// La profondeur (P6)
+			r.Get("/real-estate", s.handleRealEstate)
+			r.Get("/investments", s.handleInvestments)
+			r.Get("/objects", s.handleObjects)
+			r.Get("/timeline", s.handleTimeline)
+			r.Get("/transmission", s.handleTransmission)
+
+			r.Route("/documents", func(r chi.Router) {
+				r.Get("/", s.handleListDocuments)
+				r.Post("/", s.handleCreateDocument)
+				r.Get("/{id}/content", s.handleDocumentContent)
+				r.Delete("/{id}", s.handleDeleteDocument)
+			})
+
+			r.Route("/contacts", func(r chi.Router) {
+				r.Get("/", s.handleListContacts)
+				r.Post("/", s.handleCreateContact)
+				r.Delete("/{id}", s.handleDeleteContact)
+			})
 
 			// Pilotage (P4)
 			r.Get("/recurring", s.handleRecurring)
@@ -106,6 +140,9 @@ func (s *Server) Routes() http.Handler {
 					r.Delete("/", s.handleDeleteAsset)
 					r.Get("/valuations", s.handleListAssetValuations)
 					r.Post("/valuations", s.handleAddAssetValuation)
+					// Détails P6 : bien immobilier / objet de valeur.
+					r.Put("/property", s.handleUpsertProperty)
+					r.Put("/object", s.handleUpsertObject)
 				})
 			})
 

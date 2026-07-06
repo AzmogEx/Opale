@@ -24,6 +24,10 @@ type Config struct {
 	// interrupteur global (EIA-022 : le cloud reste opt-in).
 	AnthropicAPIKey string
 	CloudAI         bool
+
+	// Coffre-fort (P6, EF-064) : clé AES-256 en hexadécimal (64 caractères).
+	// Vide = coffre désactivé (les endpoints documents renvoient 503).
+	VaultKey string
 }
 
 // Load lit la configuration depuis les variables d'environnement (préfixe OPALE_),
@@ -60,6 +64,7 @@ func Load() (Config, error) {
 	c.OllamaModel = env("OPALE_OLLAMA_MODEL", "llama3.1:8b")
 	c.AnthropicAPIKey = os.Getenv("OPALE_ANTHROPIC_API_KEY")
 	c.CloudAI = env("OPALE_CLOUD_AI", "on") != "off"
+	c.VaultKey = os.Getenv("OPALE_VAULT_KEY")
 
 	return c, nil
 }
