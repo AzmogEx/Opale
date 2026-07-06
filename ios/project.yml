@@ -16,6 +16,9 @@ settings:
     SWIFT_APPROACHABLE_CONCURRENCY: YES
     CURRENT_PROJECT_VERSION: 1
     MARKETING_VERSION: 0.1.0
+    # Signature pour l'installation sur appareil réel.
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: WLPGS653LG
 
 targets:
   Opale:
