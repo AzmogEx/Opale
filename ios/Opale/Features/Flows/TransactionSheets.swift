@@ -17,6 +17,9 @@ struct TransactionEditSheet: View {
     @State private var applyToSimilar = true
     @State private var errorMessage: String?
     @State private var isSaving = false
+    // Espace partagé (EF-007) : dépense commune du foyer.
+    @State private var spaces: [Space] = []
+    @State private var isShared: Bool
 
     init(transaction: Transaction, categories: [Category], onSaved: @escaping () -> Void) {
         self.transaction = transaction
@@ -25,6 +28,7 @@ struct TransactionEditSheet: View {
         _label = State(initialValue: transaction.label)
         _note = State(initialValue: transaction.note)
         _categoryID = State(initialValue: transaction.categoryID ?? "")
+        _isShared = State(initialValue: transaction.spaceID != nil)
     }
 
     private var categoryChanged: Bool {
@@ -77,6 +81,21 @@ struct TransactionEditSheet: View {
                     TextField("Note", text: $note, axis: .vertical)
                 }
 
+                // Dépense commune (EF-007) — seulement si un espace existe
+                // et que le mouvement est une dépense.
+                if let space = spaces.first, transaction.amount.raw < 0 {
+                    Section {
+                        Toggle(isOn: $isShared) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Dépense commune")
+                                Text("Mise au pot de « \(space.name) » — visible par ses membres")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+
                 if let errorMessage {
                     Text(errorMessage).foregroundStyle(OpaleTheme.loss)
                 }
@@ -91,6 +110,9 @@ struct TransactionEditSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Annuler") { dismiss() }
                 }
+            }
+            .task {
+                spaces = (try? await session.api.spaces()) ?? []
             }
         }
     }
@@ -107,6 +129,13 @@ struct TransactionEditSheet: View {
                 patch.applyToSimilar = applyToSimilar && !categoryID.isEmpty
             }
             _ = try await session.api.updateTransaction(id: transaction.id, patch)
+            // Marquage commun : appel dédié, seulement si l'état a changé.
+            if isShared != (transaction.spaceID != nil) {
+                try await session.api.setTransactionSpace(
+                    transactionID: transaction.id,
+                    spaceID: isShared ? spaces.first?.id : nil
+                )
+            }
             onSaved()
             dismiss()
         } catch {

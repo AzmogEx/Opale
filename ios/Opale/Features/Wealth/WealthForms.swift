@@ -11,9 +11,13 @@ struct AssetFormSheet: View {
 
     @State private var name = ""
     @State private var kind: AssetKind = .checking
+    @State private var currency = "EUR"
     @State private var initialValue = ""
     @State private var errorMessage: String?
     @State private var isSaving = false
+
+    /// Devises proposées (EF-008) — extensibles via l'éditeur de taux.
+    static let currencies = ["EUR", "USD", "GBP", "CHF"]
 
     private var parsedValue: Cents? { Cents.parse(initialValue) }
     private var isValid: Bool {
@@ -29,6 +33,11 @@ struct AssetFormSheet: View {
                     Picker("Type", selection: $kind) {
                         ForEach(AssetKind.allCases) { kind in
                             Label(kind.label, systemImage: kind.systemImage).tag(kind)
+                        }
+                    }
+                    Picker("Devise", selection: $currency) {
+                        ForEach(Self.currencies, id: \.self) { c in
+                            Text(c).tag(c)
                         }
                     }
                 }
@@ -65,7 +74,8 @@ struct AssetFormSheet: View {
         do {
             let asset = try await session.api.createAsset(
                 name: name.trimmingCharacters(in: .whitespaces),
-                kind: kind
+                kind: kind,
+                currency: currency
             )
             if let value = parsedValue {
                 _ = try await session.api.addAssetValuation(

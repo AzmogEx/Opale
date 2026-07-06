@@ -31,9 +31,9 @@ final class SmokeTests: XCTestCase {
             .firstMatch
         XCTAssertTrue(heroLabel.waitForExistence(timeout: 10), "Le héro Patrimoine net doit s'afficher")
 
-        // Le montant vérifié en E2E (229 800 € depuis P7) doit apparaître.
+        // Le montant vérifié en E2E (239 000 € — USD converti à 0,92) doit apparaître.
         let amount = app.staticTexts
-            .matching(NSPredicate(format: "label CONTAINS '229' AND label CONTAINS '800'"))
+            .matching(NSPredicate(format: "label CONTAINS '239' AND label CONTAINS '000'"))
             .firstMatch
         XCTAssertTrue(amount.waitForExistence(timeout: 5), "Le montant du patrimoine doit être visible")
 
@@ -179,5 +179,31 @@ final class SmokeTests: XCTestCase {
             .matching(NSPredicate(format: "label CONTAINS[c] 'non configurée' OR label CONTAINS[c] 'banques connectées'"))
             .firstMatch
         XCTAssertTrue(etatBanque.waitForExistence(timeout: 10), "L'état de la synchro bancaire doit s'afficher")
+        app.buttons["Fermer"].tap()
+
+        // 14. Espace partagé (EF-007) : la balance du foyer s'affiche.
+        app.buttons["Commun"].tap()
+        let quotePart = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS[cd] 'quote-part'"))
+            .firstMatch
+        XCTAssertTrue(quotePart.waitForExistence(timeout: 10), "La balance de l'espace doit s'afficher")
+        let depensesCommunes = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS 'Courses du foyer'"))
+            .firstMatch
+        XCTAssertTrue(depensesCommunes.exists, "Les dépenses communes doivent être listées")
+
+        // 15. Multi-devises (EF-008) : le compte USD est badgé.
+        //     (liste paresseuse : la ligne est en bas — on fait défiler ;
+        //     double tap onglet : sélection PUIS dépilement à la racine)
+        tabBar.buttons["Patrimoine"].tap()
+        tabBar.buttons["Patrimoine"].tap()
+        let usd = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS 'USD'"))
+            .firstMatch
+        if !usd.waitForExistence(timeout: 5) {
+            app.swipeUp()
+            app.swipeUp()
+        }
+        XCTAssertTrue(usd.waitForExistence(timeout: 10), "Le badge de devise USD doit s'afficher")
     }
 }

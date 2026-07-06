@@ -127,6 +127,7 @@ final class APIClient: Sendable {
         let name: String
         let kind: String
         let note: String
+        let currency: String
     }
 
     struct UpsertLiabilityRequest: Encodable {
@@ -212,10 +213,10 @@ final class APIClient: Sendable {
         return env.assets
     }
 
-    func createAsset(name: String, kind: AssetKind, note: String = "") async throws -> Asset {
+    func createAsset(name: String, kind: AssetKind, note: String = "", currency: String = "EUR") async throws -> Asset {
         try await request(
             "POST", "/v1/assets/",
-            body: UpsertAssetRequest(name: name, kind: kind.rawValue, note: note)
+            body: UpsertAssetRequest(name: name, kind: kind.rawValue, note: note, currency: currency)
         )
     }
 
@@ -729,5 +730,66 @@ final class APIClient: Sendable {
 
     func bankDisconnect(id: String) async throws {
         let _: EmptyResponse = try await request("DELETE", "/v1/bank/links/\(id)")
+    }
+
+    // MARK: - Espace partagé (EF-007) & devises (EF-008)
+
+    func spaces() async throws -> [Space] {
+        struct Env: Decodable { let spaces: [Space]? }
+        let env: Env = try await request("GET", "/v1/spaces/")
+        return env.spaces ?? []
+    }
+
+    func createSpace(name: String) async throws -> Space {
+        struct Req: Encodable { let name: String }
+        return try await request("POST", "/v1/spaces/", body: Req(name: name))
+    }
+
+    func spaceDetail(id: String) async throws -> SpaceDetail {
+        try await request("GET", "/v1/spaces/\(id)")
+    }
+
+    func addSpaceMember(spaceID: String, profileID: String) async throws {
+        struct Req: Encodable {
+            let profileID: String
+            enum CodingKeys: String, CodingKey { case profileID = "profile_id" }
+        }
+        let _: EmptyResponse = try await request("POST", "/v1/spaces/\(spaceID)/members",
+                                                 body: Req(profileID: profileID))
+    }
+
+    func removeSpaceMember(spaceID: String, profileID: String) async throws {
+        let _: EmptyResponse = try await request("DELETE", "/v1/spaces/\(spaceID)/members/\(profileID)")
+    }
+
+    /// Marque (spaceID non nil) ou retire (nil) une dépense commune.
+    func setTransactionSpace(transactionID: String, spaceID: String?) async throws {
+        struct Req: Encodable {
+            let spaceID: String
+            enum CodingKeys: String, CodingKey { case spaceID = "space_id" }
+        }
+        let _: EmptyResponse = try await request("PUT", "/v1/transactions/\(transactionID)/space",
+                                                 body: Req(spaceID: spaceID ?? ""))
+    }
+
+    func fxRates() async throws -> (rates: [FXRate], unrated: [String]) {
+        struct Env: Decodable {
+            let rates: [FXRate]?
+            let unrated: [String]?
+        }
+        let env: Env = try await request("GET", "/v1/fx/")
+        return (env.rates ?? [], env.unrated ?? [])
+    }
+
+    func upsertFXRate(currency: String, rateMicro: Int64) async throws {
+        struct Req: Encodable {
+            let rateMicro: Int64
+            enum CodingKeys: String, CodingKey { case rateMicro = "rate_micro" }
+        }
+        let _: FXRate = try await request("PUT", "/v1/fx/\(currency)", body: Req(rateMicro: rateMicro))
+    }
+
+    func deleteFXRate(currency: String) async throws {
+        let _: EmptyResponse = try await request("DELETE", "/v1/fx/\(currency)")
     }
 }

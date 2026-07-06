@@ -23,6 +23,7 @@ struct FlowsView: View {
         case movements = "Mouvements"
         case envelopes = "Enveloppes"
         case upcoming = "À venir"
+        case shared = "Commun"
         var id: String { rawValue }
     }
 
@@ -48,6 +49,7 @@ struct FlowsView: View {
                 case .movements: movementsList
                 case .envelopes: EnvelopesView()
                 case .upcoming: UpcomingView()
+                case .shared: SharedSpaceView()
                 }
             }
             .navigationTitle("Flux")

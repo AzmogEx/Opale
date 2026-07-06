@@ -243,6 +243,7 @@ struct Transaction: Identifiable, Codable, Hashable, Sendable {
     var categoryID: String?
     var categoryName: String?
     var note: String
+    var spaceID: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -254,6 +255,7 @@ struct Transaction: Identifiable, Codable, Hashable, Sendable {
         case categoryID = "category_id"
         case categoryName = "category_name"
         case note
+        case spaceID = "space_id"
     }
 }
 
@@ -838,6 +840,88 @@ struct BankSyncResult: Codable, Hashable, Identifiable, Sendable {
     enum CodingKeys: String, CodingKey {
         case institution, status, imported, duplicates, error
         case linkID = "link_id"
+    }
+}
+
+// MARK: - Espace partagé (EF-007) & devises (EF-008)
+
+/// Un membre d'un espace partagé.
+struct SpaceMember: Codable, Hashable, Identifiable, Sendable {
+    var profileID: String
+    var name: String
+
+    var id: String { profileID }
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case profileID = "profile_id"
+    }
+}
+
+/// Un espace partagé du foyer.
+struct Space: Codable, Hashable, Identifiable, Sendable {
+    var id: String
+    var name: String
+    var members: [SpaceMember]
+}
+
+/// La position d'un membre dans la balance de l'espace.
+struct MemberBalance: Codable, Hashable, Identifiable, Sendable {
+    var profileID: String
+    var name: String
+    var paid: Cents
+    var share: Cents
+    var balance: Cents
+
+    var id: String { profileID }
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case profileID = "profile_id"
+        case paid = "paid_cents"
+        case share = "share_cents"
+        case balance = "balance_cents"
+    }
+}
+
+/// Une dépense commune, avec son payeur.
+struct SharedTransaction: Codable, Hashable, Identifiable, Sendable {
+    var id: String
+    var payerName: String
+    var label: String
+    var amount: Cents
+    var occurredOn: Date
+
+    enum CodingKeys: String, CodingKey {
+        case id, label
+        case payerName = "payer_name"
+        case amount = "amount_cents"
+        case occurredOn = "occurred_on"
+    }
+}
+
+/// Le détail d'un espace : balance + dépenses communes.
+struct SpaceDetail: Codable, Hashable, Sendable {
+    var members: [MemberBalance]
+    var total: Cents
+    var transactions: [SharedTransaction]?
+
+    enum CodingKeys: String, CodingKey {
+        case members, transactions
+        case total = "total_cents"
+    }
+}
+
+/// Un taux de change manuel (1 unité = rateMicro micro-euros).
+struct FXRate: Codable, Hashable, Identifiable, Sendable {
+    var currency: String
+    var rateMicro: Int64
+
+    var id: String { currency }
+
+    enum CodingKeys: String, CodingKey {
+        case currency
+        case rateMicro = "rate_micro"
     }
 }
 

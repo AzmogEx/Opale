@@ -11,7 +11,7 @@ struct WealthView: View {
     }
 
     enum Sheet: String, Identifiable {
-        case newAsset, newLiability
+        case newAsset, newLiability, fxRates
         var id: String { rawValue }
     }
 
@@ -52,6 +52,12 @@ struct WealthView: View {
                         } label: {
                             Label("Nouvelle dette", systemImage: "minus.circle")
                         }
+                        Divider()
+                        Button {
+                            activeSheet = .fxRates
+                        } label: {
+                            Label("Devises & taux", systemImage: "eurosign.arrow.circlepath")
+                        }
                     } label: {
                         Image(systemName: "plus")
                     }
@@ -63,6 +69,8 @@ struct WealthView: View {
                     AssetFormSheet { Task { await load() } }
                 case .newLiability:
                     LiabilityFormSheet { Task { await load() } }
+                case .fxRates:
+                    FXRatesSheet { Task { await load() } }
                 }
             }
             .navigationDestination(for: Asset.self) { asset in
@@ -127,7 +135,9 @@ struct WealthView: View {
                         row(
                             name: asset.name,
                             systemImage: asset.kind.systemImage,
-                            kindLabel: asset.kind.label,
+                            kindLabel: asset.currency == "EUR"
+                                ? asset.kind.label
+                                : asset.kind.label + " · " + asset.currency,
                             value: asset.latestValue,
                             negative: false
                         )
