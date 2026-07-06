@@ -7,13 +7,34 @@ import SwiftUI
 @main
 struct OpaleApp: App {
     @State private var session = SessionStore()
+    @State private var lock = AppLock()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environment(session)
+                .environment(lock)
                 .environment(\.discreetMode, session.discreetMode)
                 .tint(OpaleTheme.accent)
+                // Verrouillage (ENF-004) : masque le contenu dès qu'on quitte.
+                .overlay {
+                    if lock.locked {
+                        LockScreenView(lock: lock)
+                    }
+                }
+                .onChange(of: scenePhase) { _, phase in
+                    switch phase {
+                    case .background:
+                        if case .loggedIn = session.state { lock.lockIfEnabled() }
+                        NotificationManager.scheduleRefresh()
+                    case .active:
+                        Task { await lock.unlock() }
+                    default:
+                        break
+                    }
+                }
+                .task { NotificationManager.bootstrap() }
         }
     }
 }

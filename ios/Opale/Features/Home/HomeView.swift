@@ -34,12 +34,23 @@ struct HomeView: View {
     @State private var viewState: ViewState = .loading
     @State private var selectedDate: Date?
 
+    // Célébration de palier (EF-016) : dernier palier déjà fêté (euros).
+    @AppStorage("home.celebratedMilestone") private var celebratedMilestone = 0
+    @State private var showConfetti = false
+
+    /// Paliers de patrimoine net (euros) — alignés sur la timeline (EF-045).
+    private static let milestones = [10_000, 25_000, 50_000, 100_000, 250_000, 500_000, 1_000_000]
+
     var body: some View {
         @Bindable var session = session
         NavigationStack {
             ZStack {
                 backdrop
                 content
+                if showConfetti {
+                    ConfettiView()
+                        .transition(.opacity)
+                }
             }
             .navigationTitle("Opale")
             .navigationBarTitleDisplayMode(.inline)
@@ -382,8 +393,29 @@ struct HomeView: View {
                 netWorthCents: loadedNetWorth.net.raw,
                 historyCents: loadedHistory.points.map(\.net.raw)
             )
+
+            celebrateIfMilestoneReached(net: loadedNetWorth.net)
         } catch {
             viewState = .error(error.localizedDescription)
+        }
+    }
+
+    /// Confettis (EF-016) quand un nouveau palier vient d'être franchi.
+    /// Au premier lancement, on enregistre le palier courant SANS fêter
+    /// (on ne célèbre que les paliers franchis « en direct »).
+    private func celebrateIfMilestoneReached(net: Cents) {
+        let euros = Int(net.raw / 100)
+        let reached = Self.milestones.last { euros >= $0 } ?? 0
+        if celebratedMilestone == 0 && reached > 0 {
+            celebratedMilestone = reached
+            return
+        }
+        guard reached > celebratedMilestone else { return }
+        celebratedMilestone = reached
+        withAnimation(.easeIn(duration: 0.2)) { showConfetti = true }
+        Task {
+            try? await Task.sleep(for: .seconds(4))
+            withAnimation(.easeOut(duration: 0.6)) { showConfetti = false }
         }
     }
 }

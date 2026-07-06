@@ -792,4 +792,45 @@ final class APIClient: Sendable {
     func deleteFXRate(currency: String) async throws {
         let _: EmptyResponse = try await request("DELETE", "/v1/fx/\(currency)")
     }
+
+    // MARK: - Split multi-catégories (EF-024)
+
+    struct SplitPart: Encodable {
+        let amountCents: Int64
+        let categoryID: String
+        let label: String
+        enum CodingKeys: String, CodingKey {
+            case label
+            case amountCents = "amount_cents"
+            case categoryID = "category_id"
+        }
+    }
+
+    func splitTransaction(id: String, parts: [SplitPart]) async throws -> [Transaction] {
+        struct Req: Encodable { let parts: [SplitPart] }
+        struct Env: Decodable { let transactions: [Transaction]? }
+        let env: Env = try await request("POST", "/v1/transactions/\(id)/split", body: Req(parts: parts))
+        return env.transactions ?? []
+    }
+
+    // MARK: - Journal d'accès & export (audit)
+
+    func accessLog() async throws -> [AccessEvent] {
+        struct Env: Decodable { let events: [AccessEvent]? }
+        let env: Env = try await request("GET", "/v1/access-log")
+        return env.events ?? []
+    }
+
+    /// Télécharge l'export complet (EF-006) — ZIP en octets bruts.
+    func exportData() async throws -> Data {
+        guard let token = tokenProvider() else { throw APIError.notAuthenticated }
+        var req = URLRequest(url: baseURL.appending(path: "/v1/export"))
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await URLSession.shared.data(for: req)
+        guard let http = response as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode) else {
+            throw APIError.invalidResponse
+        }
+        return data
+    }
 }

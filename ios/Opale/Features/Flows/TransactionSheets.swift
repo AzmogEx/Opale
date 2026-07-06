@@ -20,6 +20,8 @@ struct TransactionEditSheet: View {
     // Espace partagé (EF-007) : dépense commune du foyer.
     @State private var spaces: [Space] = []
     @State private var isShared: Bool
+    // Split multi-catégories (EF-024).
+    @State private var showSplit = false
 
     init(transaction: Transaction, categories: [Category], onSaved: @escaping () -> Void) {
         self.transaction = transaction
@@ -81,6 +83,15 @@ struct TransactionEditSheet: View {
                     TextField("Note", text: $note, axis: .vertical)
                 }
 
+                // Split multi-catégories (EF-024).
+                Section {
+                    Button {
+                        showSplit = true
+                    } label: {
+                        Label("Scinder en plusieurs catégories", systemImage: "square.split.2x1")
+                    }
+                }
+
                 // Dépense commune (EF-007) — seulement si un espace existe
                 // et que le mouvement est une dépense.
                 if let space = spaces.first, transaction.amount.raw < 0 {
@@ -113,6 +124,12 @@ struct TransactionEditSheet: View {
             }
             .task {
                 spaces = (try? await session.api.spaces()) ?? []
+            }
+            .sheet(isPresented: $showSplit) {
+                SplitSheet(transaction: transaction, categories: categories) {
+                    onSaved()
+                    dismiss()
+                }
             }
         }
     }

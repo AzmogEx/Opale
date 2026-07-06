@@ -119,11 +119,12 @@ final class SmokeTests: XCTestCase {
         let suggestion = app.buttons["Comment va mon épargne ?"]
         XCTAssertTrue(suggestion.waitForExistence(timeout: 5), "Les suggestions doivent s'afficher")
         suggestion.tap()
-        // Sans IA configurée, la réponse est le repli déterministe du moteur.
+        // La réponse vient soit du N1 (Apple Intelligence locale — badge
+        // « iPhone »), soit du repli déterministe du moteur (aucune IA).
         let reponse = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label CONTAINS[c] 'calculé par le moteur'"))
+            .matching(NSPredicate(format: "label CONTAINS[c] 'calculé par le moteur' OR label CONTAINS '100 % local'"))
             .firstMatch
-        XCTAssertTrue(reponse.waitForExistence(timeout: 15), "La réponse (repli moteur) doit s'afficher")
+        XCTAssertTrue(reponse.waitForExistence(timeout: 25), "Une réponse (N1 local ou repli moteur) doit s'afficher")
 
         // 11. La profondeur (P6, EF-033/034) : les centres du Patrimoine.
         //     (label EXACT : la ligne d'actif « Studio Lyon 3e » contient

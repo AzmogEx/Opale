@@ -39,6 +39,12 @@ targets:
         # Autorise l'API locale (simulateur → localhost, homelab en LAN).
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+        # Face ID (ENF-004) et rafraîchissement d'alertes en arrière-plan.
+        NSFaceIDUsageDescription: "Déverrouiller Opale sans ressaisir ton code."
+        BGTaskSchedulerPermittedIdentifiers:
+          - app.opale.ios.refresh
+        UIBackgroundModes:
+          - fetch
 
   # Widget « Patrimoine net » (P7) : lit un instantané écrit par l'app dans
   # l'App Group — aucun réseau, aucun secret côté widget.

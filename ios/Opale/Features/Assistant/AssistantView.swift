@@ -16,6 +16,9 @@ struct AssistantView: View {
     @State private var status: AssistantStatus?
     @State private var showDecision = false
     @State private var showReview = false
+    @State private var showAccessLog = false
+    @State private var exportedFileURL: URL?
+    @State private var isExporting = false
     // EIA-022 : proposition d'escalade cloud en attente de consentement.
     @State private var pendingCloudQuestion: String?
 
@@ -72,6 +75,21 @@ struct AssistantView: View {
                                   systemImage: "cloud")
                         }
                         Divider()
+                        // ENF-004 : verrouillage biométrique (opt-in).
+                        LockToggleButton()
+                        Button {
+                            showAccessLog = true
+                        } label: {
+                            Label("Journal d'accès", systemImage: "list.bullet.rectangle")
+                        }
+                        Button {
+                            Task { await exportData() }
+                        } label: {
+                            Label(isExporting ? "Export en cours…" : "Exporter mes données",
+                                  systemImage: "square.and.arrow.up")
+                        }
+                        .disabled(isExporting)
+                        Divider()
                         Button("Se déconnecter", role: .destructive) {
                             Task { await session.logout() }
                         }
@@ -79,6 +97,13 @@ struct AssistantView: View {
                         Image(systemName: "ellipsis.circle")
                     }
                 }
+            }
+            .sheet(isPresented: $showAccessLog) {
+                AccessLogSheet()
+            }
+            .sheet(item: $exportedFileURL) { url in
+                ExportShareSheet(fileURL: url)
+                    .presentationDetents([.medium])
             }
             .task { await load() }
             .sheet(isPresented: $showDecision) {
@@ -260,6 +285,14 @@ struct AssistantView: View {
         pendingCloudQuestion = nil
         Task {
             defer { isThinking = false }
+
+            // N1 (EIA-001) : le modèle local de l'iPhone d'abord — rien ne
+            // quitte l'appareil. Indisponible/insuffisant → cascade backend.
+            if !allowCloud, let local = await askLocally(question) {
+                messages.append(ChatMessage(role: .assistant, text: local, tier: "n1"))
+                return
+            }
+
             do {
                 let resp = try await session.api.ask(question: question, allowCloud: allowCloud)
                 messages.append(ChatMessage(role: .assistant, text: resp.answer, tier: resp.tier))
@@ -274,12 +307,54 @@ struct AssistantView: View {
         }
     }
 
+    /// Tente la réponse sur le modèle local (N1) avec un contexte compact
+    /// calculé par le moteur — jamais envoyé hors de l'appareil.
+    private func askLocally(_ question: String) async -> String? {
+        guard LocalAI.isAvailable else { return nil }
+        guard let netWorth = try? await session.api.netWorth(),
+              let health = try? await session.api.healthScore() else { return nil }
+
+        var context = """
+        Situation (chiffres exacts du moteur) :
+        - Patrimoine net : \(MoneyFormat.eurosWhole(netWorth.net))
+        - Actifs : \(MoneyFormat.eurosWhole(netWorth.assetsTotal)) ; dettes : \(MoneyFormat.eurosWhole(netWorth.liabilitiesTotal))
+        - Score de santé financière : \(health.score)/100
+        """
+        for c in health.components {
+            context += "\n  - \(c.name) : \(c.score)/\(c.max) (\(c.comment))"
+        }
+        for r in risks {
+            context += "\n- Risque (\(r.severity)) : \(r.title)"
+        }
+        return await LocalAI.answer(context: context, question: question)
+    }
+
     private func load() async {
         async let r = session.api.risks()
         async let s = session.api.assistantStatus()
         risks = (try? await r) ?? []
         status = try? await s
     }
+
+    /// Export complet (EF-006) : télécharge le ZIP puis propose le partage.
+    private func exportData() async {
+        isExporting = true
+        defer { isExporting = false }
+        do {
+            let data = try await session.api.exportData()
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("opale-export.zip")
+            try data.write(to: url)
+            exportedFileURL = url
+        } catch {
+            messages.append(ChatMessage(role: .assistant,
+                text: "Export impossible : \(error.localizedDescription)", tier: ""))
+        }
+    }
+}
+
+extension URL: @retroactive Identifiable {
+    public var id: String { absoluteString }
 }
 
 // MARK: - Messages
@@ -323,6 +398,7 @@ private struct ChatBubble: View {
 
     private var tierLabel: String {
         switch message.tier {
+        case "n1": "iPhone — 100 % local"
         case "n2": "Homelab — privé"
         case "n3": "Cloud — anonymisé"
         default: "Moteur — hors ligne"
@@ -331,6 +407,7 @@ private struct ChatBubble: View {
 
     private var tierIcon: String {
         switch message.tier {
+        case "n1": "iphone"
         case "n2": "server.rack"
         case "n3": "cloud"
         default: "function"

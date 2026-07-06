@@ -925,6 +925,41 @@ struct FXRate: Codable, Hashable, Identifiable, Sendable {
     }
 }
 
+/// Une entrée du journal d'accès (ENF-004).
+struct AccessEvent: Codable, Hashable, Identifiable, Sendable {
+    var id: String
+    var event: String
+    var detail: String
+    var at: Date
+
+    var label: String {
+        switch event {
+        case "login_ok": "Connexion réussie"
+        case "login_failed": "Tentative de connexion échouée"
+        case "login_locked": "Connexion bloquée (trop de tentatives)"
+        case "document_downloaded": "Document consulté"
+        case "export": "Export des données"
+        case "logout": "Déconnexion"
+        default: event
+        }
+    }
+
+    var systemImage: String {
+        switch event {
+        case "login_ok": "checkmark.shield"
+        case "login_failed", "login_locked": "exclamationmark.shield.fill"
+        case "document_downloaded": "lock.doc"
+        case "export": "square.and.arrow.up"
+        case "logout": "rectangle.portrait.and.arrow.right"
+        default: "circle"
+        }
+    }
+
+    var isWarning: Bool {
+        event == "login_failed" || event == "login_locked"
+    }
+}
+
 // MARK: - Enveloppes de listes renvoyées par l'API
 
 struct AssetsEnvelope: Codable, Sendable { let assets: [Asset] }
