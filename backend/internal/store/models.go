@@ -25,8 +25,11 @@ type Asset struct {
 	Note        string       `json:"note"`
 	Archived    bool         `json:"archived"`
 	LatestValue *money.Cents `json:"latest_value_cents"` // dernière valorisation, nil si aucune
-	CreatedAt   time.Time    `json:"created_at"`
-	UpdatedAt   time.Time    `json:"updated_at"`
+	// TheoreticalValue (comptes de flux) : dernière valorisation + mouvements
+	// postérieurs — signale la dérive quand la valorisation n'a pas suivi.
+	TheoreticalValue *money.Cents `json:"theoretical_cents,omitempty"`
+	CreatedAt        time.Time    `json:"created_at"`
+	UpdatedAt        time.Time    `json:"updated_at"`
 }
 
 // Liability — passif (crédit immo/auto/conso).

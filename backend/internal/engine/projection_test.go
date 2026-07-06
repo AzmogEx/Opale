@@ -45,14 +45,27 @@ func TestProjectInterestDeterministic(t *testing.T) {
 }
 
 func TestProjectRejectsInvalid(t *testing.T) {
-	if _, err := Project(0, 0, -1, 12); err == nil {
-		t.Fatal("taux négatif : erreur attendue")
-	}
 	if _, err := Project(0, 0, 0, MaxProjectionMonths+1); err == nil {
 		t.Fatal("durée excessive : erreur attendue")
 	}
 	if _, err := Project(0, 0, bpsScale+1, 12); err == nil {
 		t.Fatal("taux > 100 % : erreur attendue")
+	}
+	if _, err := Project(0, 0, -bpsScale-1, 12); err == nil {
+		t.Fatal("taux < -100 % : erreur attendue")
+	}
+}
+
+// Un taux NÉGATIF est accepté depuis EF-043 (euros constants : rendement
+// réel = nominal − inflation) : le patrimoine s'érode de façon déterministe.
+func TestProjectNegativeRealRate(t *testing.T) {
+	// 1 000 000 centimes à −12 %/an (−1 %/mois) : 1 mois → −10 000 centimes.
+	pts, err := Project(money.Cents(1_000_000), 0, -1_200, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := pts[1].Net; got != money.Cents(990_000) {
+		t.Fatalf("attendu 990000, obtenu %d", got)
 	}
 }
 

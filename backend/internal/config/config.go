@@ -33,6 +33,10 @@ type Config struct {
 	GCSecretID  string
 	GCSecretKey string
 	GCBaseURL   string // vide = API officielle (surchargé en test)
+
+	// CORS (future app web) : origines autorisées, séparées par des
+	// virgules. Vide = CORS désactivé.
+	CORSOrigins string
 }
 
 // Load lit la configuration depuis les variables d'environnement (préfixe OPALE_),
@@ -74,6 +78,7 @@ func Load() (Config, error) {
 	c.GCSecretID = os.Getenv("OPALE_GC_SECRET_ID")
 	c.GCSecretKey = os.Getenv("OPALE_GC_SECRET_KEY")
 	c.GCBaseURL = os.Getenv("OPALE_GC_BASE_URL")
+	c.CORSOrigins = os.Getenv("OPALE_CORS_ORIGINS")
 
 	return c, nil
 }

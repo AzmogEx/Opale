@@ -45,6 +45,23 @@ func run() error {
 	}
 	log.Info("migrations appliquées")
 
+	// Purge périodique des sessions expirées (au démarrage puis chaque jour).
+	go func() {
+		purge := func() {
+			if n, err := st.DeleteExpiredSessions(context.Background()); err != nil {
+				log.Warn("purge des sessions", "err", err)
+			} else if n > 0 {
+				log.Info("sessions expirées purgées", "count", n)
+			}
+		}
+		purge()
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			purge()
+		}
+	}()
+
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           api.NewServer(st, cfg, log).Routes(),

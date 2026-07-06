@@ -383,3 +383,78 @@ func (s *Store) ImportTransactions(ctx context.Context, profileID string, rows [
 	}
 	return res, nil
 }
+
+// SplitPart — une part d'un mouvement scindé (EF-024).
+type SplitPart struct {
+	Amount     money.Cents
+	CategoryID *string
+	Label      string
+}
+
+// SplitTransaction remplace un mouvement par plusieurs parts (split
+// multi-catégories, EF-024). La somme des parts doit valoir exactement le
+// montant d'origine (au centime — ENF-007) ; tout se joue dans une
+// transaction SQL : jamais d'état intermédiaire visible.
+func (s *Store) SplitTransaction(ctx context.Context, profileID, id string, parts []SplitPart) ([]Transaction, error) {
+	if len(parts) < 2 {
+		return nil, fmt.Errorf("SplitTransaction: au moins 2 parts requises")
+	}
+
+	original, err := s.GetTransaction(ctx, profileID, id)
+	if err != nil {
+		return nil, err
+	}
+	var sum int64
+	for _, p := range parts {
+		if int64(p.Amount) == 0 {
+			return nil, fmt.Errorf("SplitTransaction: une part ne peut pas être nulle")
+		}
+		sum += int64(p.Amount)
+	}
+	if sum != int64(original.Amount) {
+		return nil, fmt.Errorf("SplitTransaction: la somme des parts (%d) doit égaler le montant d'origine (%d)",
+			sum, int64(original.Amount))
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("SplitTransaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM transactions WHERE id = $1 AND profile_id = $2`, id, profileID); err != nil {
+		return nil, fmt.Errorf("SplitTransaction: suppression : %w", err)
+	}
+
+	created := make([]Transaction, 0, len(parts))
+	for i, p := range parts {
+		label := p.Label
+		if label == "" {
+			label = fmt.Sprintf("%s (%d/%d)", original.Label, i+1, len(parts))
+		}
+		var t Transaction
+		err := tx.QueryRow(ctx, `
+			INSERT INTO transactions (profile_id, asset_id, amount_cents, occurred_on,
+				label, raw_label, merchant_key, category_id, note, space_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			RETURNING id, created_at, updated_at`,
+			profileID, original.AssetID, int64(p.Amount), original.OccurredOn,
+			label, original.RawLabel, original.MerchantKey, p.CategoryID,
+			original.Note, original.SpaceID,
+		).Scan(&t.ID, &t.CreatedAt, &t.UpdatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("SplitTransaction: part %d : %w", i+1, err)
+		}
+		t.ProfileID, t.AssetID = profileID, original.AssetID
+		t.Amount, t.OccurredOn = p.Amount, original.OccurredOn
+		t.Label, t.RawLabel = label, original.RawLabel
+		t.CategoryID, t.Note, t.SpaceID = p.CategoryID, original.Note, original.SpaceID
+		created = append(created, t)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("SplitTransaction: %w", err)
+	}
+	return created, nil
+}

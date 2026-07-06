@@ -31,10 +31,18 @@ func (s *Store) CreateAsset(ctx context.Context, profileID, name, kind, currency
 func (s *Store) ListAssets(ctx context.Context, profileID string) ([]Asset, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT a.id, a.profile_id, a.name, a.kind, a.currency, a.note, a.archived,
-		       a.created_at, a.updated_at, lv.value_cents
+		       a.created_at, a.updated_at, lv.value_cents,
+		       -- Solde théorique (audit) : dernière valorisation + mouvements
+		       -- postérieurs. Seulement pour les comptes de flux.
+		       CASE WHEN a.kind IN ('checking', 'savings') AND lv.value_cents IS NOT NULL
+		            THEN lv.value_cents + COALESCE((
+		                SELECT SUM(t.amount_cents) FROM transactions t
+		                WHERE t.asset_id = a.id AND t.occurred_on > lv.as_of
+		            ), 0)
+		       END AS theoretical_cents
 		FROM assets a
 		LEFT JOIN LATERAL (
-			SELECT value_cents FROM valuations v
+			SELECT value_cents, as_of FROM valuations v
 			WHERE v.asset_id = a.id
 			ORDER BY v.as_of DESC, v.created_at DESC LIMIT 1
 		) lv ON true
@@ -48,14 +56,18 @@ func (s *Store) ListAssets(ctx context.Context, profileID string) ([]Asset, erro
 	assets := []Asset{}
 	for rows.Next() {
 		var a Asset
-		var v *int64
+		var v, theo *int64
 		if err := rows.Scan(&a.ID, &a.ProfileID, &a.Name, &a.Kind, &a.Currency, &a.Note,
-			&a.Archived, &a.CreatedAt, &a.UpdatedAt, &v); err != nil {
+			&a.Archived, &a.CreatedAt, &a.UpdatedAt, &v, &theo); err != nil {
 			return nil, fmt.Errorf("ListAssets scan: %w", err)
 		}
 		if v != nil {
 			c := money.Cents(*v)
 			a.LatestValue = &c
+		}
+		if theo != nil {
+			c := money.Cents(*theo)
+			a.TheoreticalValue = &c
 		}
 		assets = append(assets, a)
 	}

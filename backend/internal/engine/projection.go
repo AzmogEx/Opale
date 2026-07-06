@@ -37,13 +37,16 @@ type ProjectionPoint struct {
 // (approximation linéaire annualBps/12, documentée et déterministe),
 // puis versement de `monthlyContribution`.
 //
+// Un taux NÉGATIF est accepté (EF-043 : projections en euros constants —
+// rendement réel = nominal − inflation, qui peut passer sous zéro).
+//
 // Renvoie months+1 points (le point 0 est la situation de départ).
 func Project(start, monthlyContribution money.Cents, annualReturnBps, months int) ([]ProjectionPoint, error) {
 	if months < 0 || months > MaxProjectionMonths {
 		return nil, ErrInvalidInput
 	}
-	if annualReturnBps < 0 || annualReturnBps > bpsScale {
-		// Un rendement négatif ou > 100 %/an n'est pas un scénario supporté.
+	if annualReturnBps < -bpsScale || annualReturnBps > bpsScale {
+		// Hors de ±100 %/an : pas un scénario supporté.
 		return nil, ErrInvalidInput
 	}
 

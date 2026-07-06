@@ -17,6 +17,9 @@ type projectionResponse struct {
 	AnnualReturnBps int         `json:"annual_return_bps"`
 	MonthlyExpenses money.Cents `json:"monthly_expenses_cents"`
 	SWRBps          int         `json:"swr_bps"`
+	// InflationBps > 0 : la courbe est en euros constants (EF-043) — le
+	// rendement appliqué est déjà le rendement RÉEL (nominal − inflation).
+	InflationBps int `json:"inflation_bps"`
 	// Courbe projetée (un point par mois, borné par `months`).
 	Points []engine.ProjectionPoint `json:"points"`
 	// Indépendance financière (règle du taux de retrait sûr).
@@ -54,10 +57,18 @@ func (s *Server) handleProjection(w http.ResponseWriter, r *http.Request) {
 	monthlyExpenses, ok3 := intParam("monthly_expenses_cents", 0)
 	months, ok4 := intParam("months", 360)
 	swrBps, ok5 := intParam("swr_bps", 400)
-	if !ok1 || !ok2 || !ok3 || !ok4 || !ok5 {
+	inflationBps, ok6 := intParam("inflation_bps", 0)
+	if !ok1 || !ok2 || !ok3 || !ok4 || !ok5 || !ok6 {
 		writeError(w, http.StatusBadRequest, "invalid_param", "paramètre numérique invalide")
 		return
 	}
+	// Euros constants (EF-043) : rendement réel = nominal − inflation
+	// (approximation linéaire, cohérente avec le taux mensuel du moteur).
+	if inflationBps < 0 || inflationBps > 10_000 {
+		writeError(w, http.StatusBadRequest, "invalid_param", "inflation_bps doit être entre 0 et 10000")
+		return
+	}
+	annualReturnBps -= inflationBps
 	if months < 1 {
 		months = 1
 	}
@@ -85,6 +96,7 @@ func (s *Server) handleProjection(w http.ResponseWriter, r *http.Request) {
 		AnnualReturnBps: annualReturnBps,
 		MonthlyExpenses: money.Cents(monthlyExpenses),
 		SWRBps:          swrBps,
+		InflationBps:    inflationBps,
 		Points:          points,
 	}
 

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -303,4 +304,50 @@ func (s *Server) handleImportCSV(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
+}
+
+// ── Split multi-catégories (EF-024) ───────────────────────────────────────────
+
+type splitRequest struct {
+	Parts []struct {
+		Amount     int64  `json:"amount_cents"`
+		CategoryID string `json:"category_id"`
+		Label      string `json:"label"`
+	} `json:"parts"`
+}
+
+// handleSplitTransaction scinde un mouvement en plusieurs parts catégorisées.
+// La somme des parts doit égaler le montant d'origine, au centime.
+func (s *Server) handleSplitTransaction(w http.ResponseWriter, r *http.Request) {
+	p := profileFromContext(r.Context())
+	var req splitRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_body", err.Error())
+		return
+	}
+	if len(req.Parts) < 2 {
+		writeError(w, http.StatusBadRequest, "invalid_body", "au moins 2 parts sont requises")
+		return
+	}
+
+	parts := make([]store.SplitPart, 0, len(req.Parts))
+	for _, part := range req.Parts {
+		sp := store.SplitPart{Amount: money.Cents(part.Amount), Label: part.Label}
+		if part.CategoryID != "" {
+			id := part.CategoryID
+			sp.CategoryID = &id
+		}
+		parts = append(parts, sp)
+	}
+
+	created, err := s.store.SplitTransaction(r.Context(), p.ID, chi.URLParam(r, "id"), parts)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "mouvement introuvable")
+			return
+		}
+		writeError(w, http.StatusBadRequest, "invalid_split", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"transactions": created})
 }

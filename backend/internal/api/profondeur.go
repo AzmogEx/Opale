@@ -471,6 +471,7 @@ func (s *Server) handleDocumentContent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "vault_corrupted", err.Error())
 		return
 	}
+	s.journal(r, &p.ID, "document_downloaded", doc.Name)
 	w.Header().Set("Content-Type", doc.Mime)
 	w.Header().Set("Content-Disposition", `attachment; filename="`+doc.Name+`"`)
 	w.WriteHeader(http.StatusOK)

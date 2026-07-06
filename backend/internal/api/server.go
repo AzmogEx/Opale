@@ -15,12 +15,21 @@ import (
 
 // Server porte les dépendances des handlers HTTP.
 type Server struct {
-	store *store.Store
-	cfg   config.Config
-	log   *slog.Logger
-	ai    *ai.Router
-	vault *vault.Vault     // nil = coffre-fort désactivé (EF-064)
-	bank  *bank.GoCardless // nil = synchro bancaire désactivée (EF-071)
+	store  *store.Store
+	cfg    config.Config
+	log    *slog.Logger
+	ai     *ai.Router
+	vault  *vault.Vault     // nil = coffre-fort désactivé (EF-064)
+	bank   *bank.GoCardless // nil = synchro bancaire désactivée (EF-071)
+	logins *loginLimiter    // anti brute-force du PIN (audit)
+}
+
+// journal trace un événement sensible dans le journal d'accès (ENF-004),
+// sans jamais bloquer la requête en cours.
+func (s *Server) journal(r *http.Request, profileID *string, event, detail string) {
+	if err := s.store.LogAccess(r.Context(), profileID, event, detail); err != nil {
+		s.log.Warn("journal d'accès", "event", event, "err", err)
+	}
 }
 
 // NewServer construit le serveur d'API. La cascade IA est assemblée depuis
@@ -54,13 +63,17 @@ func NewServer(st *store.Store, cfg config.Config, log *slog.Logger) *Server {
 	}
 
 	return &Server{store: st, cfg: cfg, log: log,
-		ai: ai.NewRouter(homelab, cloud, log), vault: v, bank: gc}
+		ai: ai.NewRouter(homelab, cloud, log), vault: v, bank: gc,
+		logins: newLoginLimiter()}
 }
 
 // Routes construit le routeur HTTP complet.
 func (s *Server) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Use(requestID, s.logRequests, s.recoverer)
+	if s.cfg.CORSOrigins != "" {
+		r.Use(corsMiddleware(s.cfg.CORSOrigins))
+	}
 
 	// Sondes de disponibilité (non authentifiées).
 	r.Get("/healthz", s.handleHealthz)
@@ -78,6 +91,8 @@ func (s *Server) Routes() http.Handler {
 
 			r.Post("/auth/logout", s.handleLogout)
 			r.Get("/me", s.handleMe)
+			r.Get("/export", s.handleExport)
+			r.Get("/access-log", s.handleAccessLog)
 			r.Get("/net-worth", s.handleNetWorth)
 			r.Get("/net-worth/history", s.handleNetWorthHistory)
 			r.Get("/projection", s.handleProjection)
@@ -163,6 +178,7 @@ func (s *Server) Routes() http.Handler {
 					r.Patch("/", s.handleUpdateTransaction)
 					r.Delete("/", s.handleDeleteTransaction)
 					r.Put("/space", s.handleSetTransactionSpace)
+					r.Post("/split", s.handleSplitTransaction)
 				})
 			})
 

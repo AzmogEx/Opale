@@ -71,6 +71,7 @@ type loginRequest struct {
 }
 
 // handleLogin authentifie un profil par son code et ouvre une session (EF-002).
+// Anti brute-force : 5 échecs verrouillent le profil 15 minutes (audit).
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -78,12 +79,24 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if remaining, locked := s.logins.locked(req.ProfileID); locked {
+		s.journal(r, &req.ProfileID, "login_locked", "")
+		writeLocked(w, remaining)
+		return
+	}
+
 	hash, err := s.store.ProfilePINHash(r.Context(), req.ProfileID)
 	// Message volontairement générique pour ne pas révéler l'existence d'un profil.
 	if err != nil || !auth.CheckPIN(hash, req.PIN) {
+		s.logins.fail(req.ProfileID)
+		if err == nil { // profil existant : l'échec le concerne, on le journalise
+			s.journal(r, &req.ProfileID, "login_failed", "")
+		}
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "profil ou code incorrect")
 		return
 	}
+	s.logins.reset(req.ProfileID)
+	s.journal(r, &req.ProfileID, "login_ok", "")
 
 	token, err := auth.NewToken()
 	if err != nil {
