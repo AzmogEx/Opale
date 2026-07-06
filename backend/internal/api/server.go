@@ -93,6 +93,8 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/me", s.handleMe)
 			r.Get("/export", s.handleExport)
 			r.Get("/access-log", s.handleAccessLog)
+			r.Delete("/me/data", s.handleResetData)
+			r.Delete("/me", s.handleDeleteMe)
 			r.Get("/net-worth", s.handleNetWorth)
 			r.Get("/net-worth/history", s.handleNetWorthHistory)
 			r.Get("/projection", s.handleProjection)

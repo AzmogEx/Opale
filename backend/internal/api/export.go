@@ -174,3 +174,39 @@ func (s *Server) handleAccessLog(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"events": events})
 }
+
+// ── Gestion du profil (Réglages) ──────────────────────────────────────────────
+
+// handleResetData efface tout le contenu du profil (Réglages → Données).
+// Garde-fou : le client doit envoyer confirm=<nom du profil>.
+func (s *Server) handleResetData(w http.ResponseWriter, r *http.Request) {
+	p := profileFromContext(r.Context())
+	if r.URL.Query().Get("confirm") != p.Name {
+		writeError(w, http.StatusBadRequest, "confirmation_required",
+			"Ajoute ?confirm=<nom du profil> pour confirmer la réinitialisation.")
+		return
+	}
+	if err := s.store.ResetProfileData(r.Context(), p.ID); err != nil {
+		s.storeErr(w, err, "reset data")
+		return
+	}
+	s.journal(r, &p.ID, "data_reset", "")
+	writeJSON(w, http.StatusNoContent, nil)
+}
+
+// handleDeleteMe supprime le profil et toutes ses données. Irréversible.
+func (s *Server) handleDeleteMe(w http.ResponseWriter, r *http.Request) {
+	p := profileFromContext(r.Context())
+	if r.URL.Query().Get("confirm") != p.Name {
+		writeError(w, http.StatusBadRequest, "confirmation_required",
+			"Ajoute ?confirm=<nom du profil> pour confirmer la suppression.")
+		return
+	}
+	// Journalisé AVANT (le cascade emporte le journal du profil).
+	s.journal(r, &p.ID, "profile_deleted", p.Name)
+	if err := s.store.DeleteProfile(r.Context(), p.ID); err != nil {
+		s.storeErr(w, err, "delete profile")
+		return
+	}
+	writeJSON(w, http.StatusNoContent, nil)
+}
