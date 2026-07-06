@@ -484,4 +484,151 @@ final class APIClient: Sendable {
         if allowCloud { query.append(URLQueryItem(name: "allow_cloud", value: "true")) }
         return try await request("GET", "/v1/monthly-review", query: query)
     }
+
+    // MARK: - La profondeur (P6)
+
+    func realEstate() async throws -> [PropertyStatus] {
+        struct Env: Decodable { let properties: [PropertyStatus]? }
+        let env: Env = try await request("GET", "/v1/real-estate")
+        return env.properties ?? []
+    }
+
+    struct PropertyRequest: Encodable {
+        let purchasePriceCents: Int64
+        let purchaseDate: String
+        let monthlyRentCents: Int64
+        let monthlyChargesCents: Int64
+        let propertyTaxYearlyCents: Int64
+        let liabilityID: String
+        let monthlyLoanPaymentCents: Int64
+        enum CodingKeys: String, CodingKey {
+            case purchasePriceCents = "purchase_price_cents"
+            case purchaseDate = "purchase_date"
+            case monthlyRentCents = "monthly_rent_cents"
+            case monthlyChargesCents = "monthly_charges_cents"
+            case propertyTaxYearlyCents = "property_tax_yearly_cents"
+            case liabilityID = "liability_id"
+            case monthlyLoanPaymentCents = "monthly_loan_payment_cents"
+        }
+    }
+
+    func upsertProperty(assetID: String, _ req: PropertyRequest) async throws {
+        let _: PropertyDetails = try await request("PUT", "/v1/assets/\(assetID)/property", body: req)
+    }
+
+    func investments() async throws -> (items: [InvestmentStatus], total: Cents) {
+        struct Env: Decodable {
+            let investments: [InvestmentStatus]?
+            let totalCents: Cents
+            enum CodingKeys: String, CodingKey {
+                case investments
+                case totalCents = "total_cents"
+            }
+        }
+        let env: Env = try await request("GET", "/v1/investments")
+        return (env.investments ?? [], env.totalCents)
+    }
+
+    func objects() async throws -> [ObjectStatus] {
+        struct Env: Decodable { let objects: [ObjectStatus]? }
+        let env: Env = try await request("GET", "/v1/objects")
+        return env.objects ?? []
+    }
+
+    struct ObjectRequest: Encodable {
+        let category: String
+        let brand: String
+        let purchasePriceCents: Int64
+        let purchaseDate: String
+        let insured: Bool
+        enum CodingKeys: String, CodingKey {
+            case category, brand, insured
+            case purchasePriceCents = "purchase_price_cents"
+            case purchaseDate = "purchase_date"
+        }
+    }
+
+    func upsertObject(assetID: String, _ req: ObjectRequest) async throws {
+        let _: ObjectDetails = try await request("PUT", "/v1/assets/\(assetID)/object", body: req)
+    }
+
+    func timeline() async throws -> [TimelineEvent] {
+        struct Env: Decodable { let events: [TimelineEvent]? }
+        let env: Env = try await request("GET", "/v1/timeline")
+        return env.events ?? []
+    }
+
+    func documents() async throws -> (items: [VaultDocument], vaultConfigured: Bool) {
+        struct Env: Decodable {
+            let documents: [VaultDocument]?
+            let vaultConfigured: Bool
+            enum CodingKeys: String, CodingKey {
+                case documents
+                case vaultConfigured = "vault_configured"
+            }
+        }
+        let env: Env = try await request("GET", "/v1/documents/")
+        return (env.documents ?? [], env.vaultConfigured)
+    }
+
+    struct DocumentRequest: Encodable {
+        let name: String
+        let kind: String
+        let mime: String
+        let assetID: String
+        let contentBase64: String
+        enum CodingKeys: String, CodingKey {
+            case name, kind, mime
+            case assetID = "asset_id"
+            case contentBase64 = "content_base64"
+        }
+    }
+
+    func createDocument(_ req: DocumentRequest) async throws -> VaultDocument {
+        try await request("POST", "/v1/documents/", body: req)
+    }
+
+    /// Télécharge le contenu déchiffré d'un document (octets bruts).
+    func documentContent(id: String) async throws -> Data {
+        guard let token = tokenProvider() else { throw APIError.notAuthenticated }
+        var req = URLRequest(url: baseURL.appending(path: "/v1/documents/\(id)/content"))
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await URLSession.shared.data(for: req)
+        guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+        guard (200..<300).contains(http.statusCode) else {
+            if http.statusCode == 401 { throw APIError.notAuthenticated }
+            throw APIError.badStatus(http.statusCode, message: nil)
+        }
+        return data
+    }
+
+    func deleteDocument(id: String) async throws {
+        let _: EmptyResponse = try await request("DELETE", "/v1/documents/\(id)")
+    }
+
+    func contacts() async throws -> [Contact] {
+        struct Env: Decodable { let contacts: [Contact]? }
+        let env: Env = try await request("GET", "/v1/contacts/")
+        return env.contacts ?? []
+    }
+
+    struct ContactRequest: Encodable {
+        let name: String
+        let role: String
+        let phone: String
+        let email: String
+        let note: String
+    }
+
+    func createContact(_ req: ContactRequest) async throws -> Contact {
+        try await request("POST", "/v1/contacts/", body: req)
+    }
+
+    func deleteContact(id: String) async throws {
+        let _: EmptyResponse = try await request("DELETE", "/v1/contacts/\(id)")
+    }
+
+    func transmission() async throws -> TransmissionSummary {
+        try await request("GET", "/v1/transmission")
+    }
 }

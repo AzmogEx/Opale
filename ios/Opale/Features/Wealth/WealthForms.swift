@@ -224,4 +224,13 @@ extension Date {
     var opaleDayString: String {
         formatted(.iso8601.year().month().day())
     }
+
+    /// Inverse : lit une date `yyyy-MM-dd` renvoyée par le backend.
+    static func fromOpaleDay(_ day: String) -> Date? {
+        let parts = day.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return nil }
+        var comps = DateComponents()
+        (comps.year, comps.month, comps.day) = (parts[0], parts[1], parts[2])
+        return Calendar.current.date(from: comps)
+    }
 }

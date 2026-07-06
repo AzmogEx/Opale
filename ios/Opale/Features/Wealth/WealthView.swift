@@ -17,6 +17,7 @@ struct WealthView: View {
 
     @State private var viewState: ViewState = .loading
     @State private var activeSheet: Sheet?
+    @State private var selectedCenter: WealthCenter?
 
     var body: some View {
         NavigationStack {
@@ -67,6 +68,16 @@ struct WealthView: View {
             .navigationDestination(for: Asset.self) { asset in
                 AssetDetailView(asset: asset) { Task { await load() } }
             }
+            .navigationDestination(item: $selectedCenter) { center in
+                switch center {
+                case .realEstate: RealEstateView()
+                case .investments: InvestmentsView()
+                case .objects: ObjectsView()
+                case .timeline: TimelineView()
+                case .vault: VaultView()
+                case .transmission: TransmissionView()
+                }
+            }
             .navigationDestination(for: Liability.self) { liability in
                 LiabilityDetailView(liability: liability) { Task { await load() } }
             }
@@ -78,6 +89,33 @@ struct WealthView: View {
     @ViewBuilder
     private func list(assets: [Asset], liabilities: [Liability]) -> some View {
         List {
+            // La profondeur (P6) : les centres spécialisés.
+            // ⚠️ Pas de NavigationLink ici : plusieurs liens dans UNE ligne de
+            // List routent tous les taps vers le premier. Boutons `.plain`
+            // (hit-test individuel) + navigation programmatique.
+            Section("Centres") {
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                    ForEach(WealthCenter.allCases) { center in
+                        Button {
+                            selectedCenter = center
+                        } label: {
+                            VStack(spacing: 6) {
+                                Image(systemName: center.systemImage)
+                                    .font(.title3)
+                                    .foregroundStyle(OpaleTheme.accent)
+                                Text(center.label)
+                                    .font(.caption2.weight(.semibold))
+                                    .multilineTextAlignment(.center)
+                                    .lineLimit(2)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 64)
+                            .contentShape(.rect)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
+            }
             Section("Actifs") {
                 if assets.isEmpty {
                     Text("Aucun actif — ajoute ton premier compte, livret ou bien.")
@@ -172,6 +210,37 @@ struct WealthView: View {
             try? await session.api.deleteLiability(id: liabilities[index].id)
         }
         await load()
+    }
+}
+
+// MARK: - Centres (P6)
+
+/// Les six centres de la profondeur patrimoniale.
+enum WealthCenter: String, CaseIterable, Identifiable, Hashable {
+    case realEstate, investments, objects, timeline, vault, transmission
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .realEstate: "Immobilier"
+        case .investments: "Placements"
+        case .objects: "Objets"
+        case .timeline: "Timeline"
+        case .vault: "Coffre-fort"
+        case .transmission: "Transmission"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .realEstate: "house.fill"
+        case .investments: "chart.pie.fill"
+        case .objects: "sparkle.magnifyingglass"
+        case .timeline: "calendar.day.timeline.left"
+        case .vault: "lock.doc.fill"
+        case .transmission: "figure.2.and.child.holdinghands"
+        }
     }
 }
 

@@ -520,6 +520,205 @@ struct MonthlyReview: Codable, Hashable, Sendable {
     }
 }
 
+// MARK: - La profondeur (P6)
+
+/// Détails d'un bien immobilier (EF-033).
+struct PropertyDetails: Codable, Hashable, Sendable {
+    var purchasePrice: Cents
+    var purchaseDate: Date?
+    var monthlyRent: Cents
+    var monthlyCharges: Cents
+    var propertyTaxYearly: Cents
+    var liabilityID: String?
+    var monthlyLoanPayment: Cents
+
+    enum CodingKeys: String, CodingKey {
+        case purchasePrice = "purchase_price_cents"
+        case purchaseDate = "purchase_date"
+        case monthlyRent = "monthly_rent_cents"
+        case monthlyCharges = "monthly_charges_cents"
+        case propertyTaxYearly = "property_tax_yearly_cents"
+        case liabilityID = "liability_id"
+        case monthlyLoanPayment = "monthly_loan_payment_cents"
+    }
+}
+
+/// Un bien immobilier complet + indicateurs du moteur.
+struct PropertyStatus: Codable, Hashable, Identifiable, Sendable {
+    var asset: Asset
+    var details: PropertyDetails
+    var loanRemaining: Cents?
+    var loanName: String?
+    var grossYieldBps: Int
+    var monthlyCashflow: Cents
+    var capitalGain: Cents
+    var equity: Cents
+
+    var id: String { asset.id }
+
+    enum CodingKeys: String, CodingKey {
+        case asset, details
+        case loanRemaining = "loan_remaining_cents"
+        case loanName = "loan_name"
+        case grossYieldBps = "gross_yield_bps"
+        case monthlyCashflow = "monthly_cashflow_cents"
+        case capitalGain = "capital_gain_cents"
+        case equity = "equity_cents"
+    }
+}
+
+/// Un placement + sa performance (EF-034).
+struct InvestmentStatus: Codable, Hashable, Identifiable, Sendable {
+    var asset: Asset
+    var firstValue: Cents
+    var firstDate: Date?
+    var change: Cents
+    var changeBps: Int
+    var allocationBps: Int
+
+    var id: String { asset.id }
+
+    enum CodingKeys: String, CodingKey {
+        case asset
+        case firstValue = "first_value_cents"
+        case firstDate = "first_date"
+        case change = "change_cents"
+        case changeBps = "change_bps"
+        case allocationBps = "allocation_bps"
+    }
+}
+
+/// Détails d'un objet de valeur (EF-035).
+struct ObjectDetails: Codable, Hashable, Sendable {
+    var category: String
+    var brand: String
+    var purchasePrice: Cents
+    var purchaseDate: Date?
+    var insured: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case category, brand, insured
+        case purchasePrice = "purchase_price_cents"
+        case purchaseDate = "purchase_date"
+    }
+}
+
+/// Un objet de valeur complet.
+struct ObjectStatus: Codable, Hashable, Identifiable, Sendable {
+    var asset: Asset
+    var details: ObjectDetails
+    var change: Cents
+
+    var id: String { asset.id }
+
+    enum CodingKeys: String, CodingKey {
+        case asset, details
+        case change = "change_cents"
+    }
+}
+
+/// Un jalon de la timeline patrimoniale (EF-045).
+struct TimelineEvent: Codable, Hashable, Identifiable, Sendable {
+    var date: String // yyyy-MM-dd
+    var kind: String // acquisition | milestone | goal | independence
+    var title: String
+    var detail: String?
+    var amount: Cents?
+    var future: Bool
+
+    var id: String { date + kind + title }
+
+    enum CodingKeys: String, CodingKey {
+        case date, kind, title, detail, future
+        case amount = "amount_cents"
+    }
+}
+
+/// Métadonnées d'un document du coffre-fort (EF-064).
+struct VaultDocument: Codable, Hashable, Identifiable, Sendable {
+    var id: String
+    var assetID: String?
+    var assetName: String?
+    var name: String
+    var kind: String
+    var mime: String
+    var sizeBytes: Int64
+    var createdAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, kind, mime
+        case assetID = "asset_id"
+        case assetName = "asset_name"
+        case sizeBytes = "size_bytes"
+        case createdAt = "created_at"
+    }
+}
+
+/// Un contact du plan de transmission (EF-063).
+struct Contact: Codable, Hashable, Identifiable, Sendable {
+    var id: String
+    var name: String
+    var role: String
+    var phone: String
+    var email: String
+    var note: String
+}
+
+/// Rôles de contact, libellés français.
+enum ContactRole: String, CaseIterable, Identifiable, Sendable {
+    case notary, trusted, banker, insurer, accountant, other
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .notary: "Notaire"
+        case .trusted: "Proche de confiance"
+        case .banker: "Banquier"
+        case .insurer: "Assureur"
+        case .accountant: "Comptable"
+        case .other: "Autre"
+        }
+    }
+    var systemImage: String {
+        switch self {
+        case .notary: "text.book.closed"
+        case .trusted: "heart.circle"
+        case .banker: "building.columns"
+        case .insurer: "shield.lefthalf.filled"
+        case .accountant: "sum"
+        case .other: "person.circle"
+        }
+    }
+}
+
+/// Le dossier de transmission (EF-063).
+struct TransmissionSummary: Codable, Hashable, Sendable {
+    struct TransmissionAsset: Codable, Hashable, Identifiable, Sendable {
+        var id: String
+        var name: String
+        var kind: AssetKind
+        var latestValue: Cents?
+        var documentCount: Int
+
+        enum CodingKeys: String, CodingKey {
+            case id, name, kind
+            case latestValue = "latest_value_cents"
+            case documentCount = "document_count"
+        }
+    }
+
+    var netWorth: NetWorth
+    var contacts: [Contact]
+    var assets: [TransmissionAsset]
+    var liabilities: [Liability]
+    var documentCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case contacts, assets, liabilities
+        case netWorth = "net_worth"
+        case documentCount = "document_count"
+    }
+}
+
 // MARK: - Enveloppes de listes renvoyées par l'API
 
 struct AssetsEnvelope: Codable, Sendable { let assets: [Asset] }

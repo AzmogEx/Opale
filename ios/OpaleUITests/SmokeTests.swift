@@ -31,9 +31,9 @@ final class SmokeTests: XCTestCase {
             .firstMatch
         XCTAssertTrue(heroLabel.waitForExistence(timeout: 10), "Le héro Patrimoine net doit s'afficher")
 
-        // Le montant vérifié en P0 (48 300 €) doit apparaître.
+        // Le montant vérifié en E2E (109 800 € depuis P6) doit apparaître.
         let amount = app.staticTexts
-            .matching(NSPredicate(format: "label CONTAINS '48' AND label CONTAINS '300'"))
+            .matching(NSPredicate(format: "label CONTAINS '109' AND label CONTAINS '800'"))
             .firstMatch
         XCTAssertTrue(amount.waitForExistence(timeout: 5), "Le montant du patrimoine doit être visible")
 
@@ -124,5 +124,33 @@ final class SmokeTests: XCTestCase {
             .matching(NSPredicate(format: "label CONTAINS[c] 'calculé par le moteur'"))
             .firstMatch
         XCTAssertTrue(reponse.waitForExistence(timeout: 15), "La réponse (repli moteur) doit s'afficher")
+
+        // 11. La profondeur (P6, EF-033/034) : les centres du Patrimoine.
+        //     (label EXACT : la ligne d'actif « Studio Lyon 3e » contient
+        //     aussi « Immobilier » comme sous-titre de type.)
+        tabBar.buttons["Patrimoine"].tap()
+        let immobilier = app.buttons["Immobilier"]
+        XCTAssertTrue(immobilier.waitForExistence(timeout: 10), "Le centre Immobilier doit s'afficher")
+        immobilier.tap()
+        let rendement = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS[c] 'rendement'"))
+            .firstMatch
+        XCTAssertTrue(rendement.waitForExistence(timeout: 10), "Les indicateurs immobiliers doivent s'afficher")
+        // Retour à la racine : re-taper l'onglet courant dépile la navigation.
+        tabBar.buttons["Patrimoine"].tap()
+
+        let placements = app.buttons["Placements"]
+        XCTAssertTrue(placements.waitForExistence(timeout: 10), "Le centre Placements doit s'afficher")
+        placements.tap()
+        // Contenu propre à l'écran Placements (insensible casse + accents).
+        let repartition = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS[cd] 'repartition' OR label CONTAINS[cd] 'performance'"))
+            .firstMatch
+        // Le tap peut se perdre dans l'animation de dépilement : un re-essai
+        // SEULEMENT si on est toujours sur la grille des centres.
+        if !repartition.waitForExistence(timeout: 4), placements.exists {
+            placements.tap()
+        }
+        XCTAssertTrue(repartition.waitForExistence(timeout: 10), "La répartition des placements doit s'afficher")
     }
 }
