@@ -28,6 +28,11 @@ type Config struct {
 	// Coffre-fort (P6, EF-064) : clé AES-256 en hexadécimal (64 caractères).
 	// Vide = coffre désactivé (les endpoints documents renvoient 503).
 	VaultKey string
+
+	// Synchro bancaire GoCardless (P7, EF-071). Vide = désactivée.
+	GCSecretID  string
+	GCSecretKey string
+	GCBaseURL   string // vide = API officielle (surchargé en test)
 }
 
 // Load lit la configuration depuis les variables d'environnement (préfixe OPALE_),
@@ -65,6 +70,10 @@ func Load() (Config, error) {
 	c.AnthropicAPIKey = os.Getenv("OPALE_ANTHROPIC_API_KEY")
 	c.CloudAI = env("OPALE_CLOUD_AI", "on") != "off"
 	c.VaultKey = os.Getenv("OPALE_VAULT_KEY")
+
+	c.GCSecretID = os.Getenv("OPALE_GC_SECRET_ID")
+	c.GCSecretKey = os.Getenv("OPALE_GC_SECRET_KEY")
+	c.GCBaseURL = os.Getenv("OPALE_GC_BASE_URL")
 
 	return c, nil
 }

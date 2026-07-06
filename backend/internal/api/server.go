@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/opale-app/opale/internal/ai"
+	"github.com/opale-app/opale/internal/bank"
 	"github.com/opale-app/opale/internal/config"
 	"github.com/opale-app/opale/internal/store"
 	"github.com/opale-app/opale/internal/vault"
@@ -18,7 +19,8 @@ type Server struct {
 	cfg   config.Config
 	log   *slog.Logger
 	ai    *ai.Router
-	vault *vault.Vault // nil = coffre-fort désactivé (EF-064)
+	vault *vault.Vault     // nil = coffre-fort désactivé (EF-064)
+	bank  *bank.GoCardless // nil = synchro bancaire désactivée (EF-071)
 }
 
 // NewServer construit le serveur d'API. La cascade IA est assemblée depuis
@@ -45,7 +47,14 @@ func NewServer(st *store.Store, cfg config.Config, log *slog.Logger) *Server {
 		}
 	}
 
-	return &Server{store: st, cfg: cfg, log: log, ai: ai.NewRouter(homelab, cloud, log), vault: v}
+	var gc *bank.GoCardless
+	if cfg.GCSecretID != "" && cfg.GCSecretKey != "" {
+		gc = bank.New(cfg.GCBaseURL, cfg.GCSecretID, cfg.GCSecretKey)
+		log.Info("bank: synchro GoCardless configurée")
+	}
+
+	return &Server{store: st, cfg: cfg, log: log,
+		ai: ai.NewRouter(homelab, cloud, log), vault: v, bank: gc}
 }
 
 // Routes construit le routeur HTTP complet.
@@ -81,6 +90,17 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/monthly-review", s.handleMonthlyReview)
 			r.Post("/assistant/ask", s.handleAssistantAsk)
 			r.Get("/assistant/status", s.handleAssistantStatus)
+
+			// Le confort (P7)
+			r.Post("/scenarios/compare", s.handleCompareScenarios)
+			r.Get("/company", s.handleCompanies)
+			r.Route("/bank", func(r chi.Router) {
+				r.Get("/status", s.handleBankStatus)
+				r.Get("/institutions", s.handleBankInstitutions)
+				r.Post("/connect", s.handleBankConnect)
+				r.Post("/sync", s.handleBankSync)
+				r.Delete("/links/{id}", s.handleBankDisconnect)
+			})
 
 			// La profondeur (P6)
 			r.Get("/real-estate", s.handleRealEstate)
@@ -143,6 +163,8 @@ func (s *Server) Routes() http.Handler {
 					// Détails P6 : bien immobilier / objet de valeur.
 					r.Put("/property", s.handleUpsertProperty)
 					r.Put("/object", s.handleUpsertObject)
+					// Détails P7 : parts de société.
+					r.Put("/company", s.handleUpsertCompany)
 				})
 			})
 
