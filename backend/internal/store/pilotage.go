@@ -358,3 +358,42 @@ func (s *Store) SpendingByCategory(ctx context.Context, profileID string, year i
 	}
 	return out, rows.Err()
 }
+
+// MerchantSpend — total dépensé chez un marchand (écran Analyses).
+type MerchantSpend struct {
+	Label string      `json:"label"` // libellé nettoyé le plus fréquent
+	Count int         `json:"count"`
+	Total money.Cents `json:"total_cents"` // valeur positive
+}
+
+// TopMerchants — les plus gros marchands d'un mois calendaire.
+func (s *Store) TopMerchants(ctx context.Context, profileID string, year int, month time.Month, limit int) ([]MerchantSpend, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT mode() WITHIN GROUP (ORDER BY label), COUNT(*), -SUM(amount_cents) AS total
+		FROM transactions
+		WHERE profile_id = $1 AND amount_cents < 0
+		  AND merchant_key <> ''
+		  AND occurred_on >= make_date($2, $3, 1)
+		  AND occurred_on < make_date($2, $3, 1) + interval '1 month'
+		GROUP BY merchant_key
+		ORDER BY total DESC
+		LIMIT $4`,
+		profileID, year, int(month), limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("TopMerchants: %w", err)
+	}
+	defer rows.Close()
+
+	var out []MerchantSpend
+	for rows.Next() {
+		var m MerchantSpend
+		var total int64
+		if err := rows.Scan(&m.Label, &m.Count, &total); err != nil {
+			return nil, fmt.Errorf("TopMerchants: %w", err)
+		}
+		m.Total = money.Cents(total)
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}

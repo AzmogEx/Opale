@@ -364,3 +364,55 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{"alerts": alerts})
 }
+
+// ── Analyses (écran Analyses — le cœur addictif) ──────────────────────────────
+
+// handleAnalytics agrège le mois demandé : dépenses par catégorie, top
+// marchands, et comparaison avec le mois précédent. Calculs SQL/entiers.
+func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
+	p := profileFromContext(r.Context())
+
+	now := time.Now()
+	year, month := now.Year(), now.Month()
+	if raw := r.URL.Query().Get("year"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil {
+			year = n
+		}
+	}
+	if raw := r.URL.Query().Get("month"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n >= 1 && n <= 12 {
+			month = time.Month(n)
+		}
+	}
+	prev := time.Date(year, month, 1, 0, 0, 0, 0, time.UTC).AddDate(0, -1, 0)
+
+	summary, err := s.store.ComputeMonthSummary(r.Context(), p.ID, year, month)
+	if err != nil {
+		s.storeErr(w, err, "analytics: summary")
+		return
+	}
+	prevSummary, err := s.store.ComputeMonthSummary(r.Context(), p.ID, prev.Year(), prev.Month())
+	if err != nil {
+		s.storeErr(w, err, "analytics: prev")
+		return
+	}
+	categories, err := s.store.SpendingByCategory(r.Context(), p.ID, year, month, 12)
+	if err != nil {
+		s.storeErr(w, err, "analytics: categories")
+		return
+	}
+	merchants, err := s.store.TopMerchants(r.Context(), p.ID, year, month, 8)
+	if err != nil {
+		s.storeErr(w, err, "analytics: merchants")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"year":            year,
+		"month":           int(month),
+		"summary":         summary,
+		"previous":        prevSummary,
+		"categories":      categories,
+		"top_merchants":   merchants,
+	})
+}
