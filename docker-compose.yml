@@ -32,11 +32,29 @@ services:
       OPALE_DB_PASSWORD: ${OPALE_DB_PASSWORD:-opale}
       OPALE_DB_NAME: ${OPALE_DB_NAME:-opale}
       OPALE_DB_SSLMODE: disable
+      # Optionnels (voir .env.example) : coffre, IA, banque.
+      OPALE_VAULT_KEY: ${OPALE_VAULT_KEY:-}
+      OPALE_OLLAMA_URL: ${OPALE_OLLAMA_URL:-}
+      OPALE_OLLAMA_MODEL: ${OPALE_OLLAMA_MODEL:-llama3.1:8b}
+      OPALE_ANTHROPIC_API_KEY: ${OPALE_ANTHROPIC_API_KEY:-}
+      OPALE_GC_SECRET_ID: ${OPALE_GC_SECRET_ID:-}
+      OPALE_GC_SECRET_KEY: ${OPALE_GC_SECRET_KEY:-}
     ports:
       - "8080:8080"
     depends_on:
       db:
         condition: service_healthy
+    restart: unless-stopped
+
+  # Cockpit web : nginx sert la SPA et proxifie /v1 vers l'API
+  # (même origine → pas de CORS à configurer).
+  web:
+    build: ./web
+    container_name: opale-web
+    ports:
+      - "${OPALE_WEB_PORT:-3000}:80"
+    depends_on:
+      - api
     restart: unless-stopped
 
 volumes:

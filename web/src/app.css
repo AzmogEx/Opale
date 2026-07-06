@@ -1,0 +1,40 @@
+@import 'tailwindcss';
+
+/* ── Thème Opale (aligné sur OpaleTheme.swift) ──────────────────────────── */
+@theme {
+	--color-accent: #59b8b5; /* rgb(0.35, 0.72, 0.71) */
+	--color-gain: #3db58a; /* rgb(0.24, 0.71, 0.54) */
+	--color-loss: #e05c61; /* rgb(0.88, 0.36, 0.38) */
+	--font-sans: 'Inter var', ui-rounded, -apple-system, 'SF Pro Rounded', system-ui, sans-serif;
+}
+
+/* Fond irisé signature — voile très léger comme sur iOS. */
+body {
+	@apply min-h-screen bg-neutral-50 text-neutral-900 antialiased dark:bg-neutral-950 dark:text-neutral-100;
+	background-image:
+		radial-gradient(60rem 40rem at 10% -10%, rgb(89 184 181 / 0.14), transparent 60%),
+		radial-gradient(50rem 36rem at 110% 20%, rgb(147 128 224 / 0.12), transparent 60%),
+		radial-gradient(40rem 40rem at 50% 120%, rgb(224 156 92 / 0.08), transparent 60%);
+	background-attachment: fixed;
+}
+
+/* Carte de verre — l'équivalent web de GlassCard. */
+.glass {
+	@apply rounded-3xl border border-white/50 bg-white/55 shadow-[0_8px_32px_rgb(0_0_0/0.06)] backdrop-blur-xl dark:border-white/10 dark:bg-white/5;
+}
+
+/* Dégradé irisé pour les chiffres héros. */
+.iridescent {
+	background-image: linear-gradient(100deg, #59b8b5, #7d8fd6, #b58ac9);
+	@apply bg-clip-text text-transparent;
+}
+
+/* Mode discret (EF-004) : floute les montants d'un geste. */
+.discreet .amount {
+	filter: blur(10px);
+	transition: filter 0.25s ease;
+}
+.amount {
+	transition: filter 0.25s ease;
+	font-variant-numeric: tabular-nums;
+}
