@@ -1,0 +1,4 @@
+DROP TABLE IF EXISTS fx_rates;
+ALTER TABLE transactions DROP COLUMN IF EXISTS space_id;
+DROP TABLE IF EXISTS space_members;
+DROP TABLE IF EXISTS spaces;

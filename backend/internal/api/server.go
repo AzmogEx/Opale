@@ -91,6 +91,20 @@ func (s *Server) Routes() http.Handler {
 			r.Post("/assistant/ask", s.handleAssistantAsk)
 			r.Get("/assistant/status", s.handleAssistantStatus)
 
+			// Espace partagé (EF-007) & devises (EF-008)
+			r.Route("/spaces", func(r chi.Router) {
+				r.Get("/", s.handleListSpaces)
+				r.Post("/", s.handleCreateSpace)
+				r.Get("/{id}", s.handleSpaceDetail)
+				r.Post("/{id}/members", s.handleAddSpaceMember)
+				r.Delete("/{id}/members/{profileID}", s.handleRemoveSpaceMember)
+			})
+			r.Route("/fx", func(r chi.Router) {
+				r.Get("/", s.handleListFX)
+				r.Put("/{currency}", s.handleUpsertFX)
+				r.Delete("/{currency}", s.handleDeleteFX)
+			})
+
 			// Le confort (P7)
 			r.Post("/scenarios/compare", s.handleCompareScenarios)
 			r.Get("/company", s.handleCompanies)
@@ -148,6 +162,7 @@ func (s *Server) Routes() http.Handler {
 				r.Route("/{id}", func(r chi.Router) {
 					r.Patch("/", s.handleUpdateTransaction)
 					r.Delete("/", s.handleDeleteTransaction)
+					r.Put("/space", s.handleSetTransactionSpace)
 				})
 			})
 

@@ -48,18 +48,22 @@ func (s *Store) ComputeNetWorthHistory(ctx context.Context, profileID string, mo
 			p.as_of,
 			COALESCE((
 				SELECT SUM(lv.value_cents) FROM (
-					SELECT DISTINCT ON (v.asset_id) v.value_cents
+					SELECT DISTINCT ON (v.asset_id)
+					       v.value_cents * COALESCE(fx.rate_micro, 1000000) / 1000000 AS value_cents
 					FROM valuations v
 					JOIN assets a ON a.id = v.asset_id
+					LEFT JOIN fx_rates fx ON fx.currency = a.currency
 					WHERE v.profile_id = $1 AND a.archived = false AND v.as_of <= p.as_of
 					ORDER BY v.asset_id, v.as_of DESC, v.created_at DESC
 				) lv
 			), 0) AS assets_cents,
 			COALESCE((
 				SELECT SUM(lv.value_cents) FROM (
-					SELECT DISTINCT ON (v.liability_id) v.value_cents
+					SELECT DISTINCT ON (v.liability_id)
+					       v.value_cents * COALESCE(fx.rate_micro, 1000000) / 1000000 AS value_cents
 					FROM valuations v
 					JOIN liabilities l ON l.id = v.liability_id
+					LEFT JOIN fx_rates fx ON fx.currency = l.currency
 					WHERE v.profile_id = $1 AND l.archived = false AND v.as_of <= p.as_of
 					ORDER BY v.liability_id, v.as_of DESC, v.created_at DESC
 				) lv

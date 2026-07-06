@@ -141,9 +141,11 @@ func (s *Store) CashBalance(ctx context.Context, profileID string) (money.Cents,
 	var cash int64
 	err := s.pool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(lv.value_cents), 0) FROM (
-			SELECT DISTINCT ON (v.asset_id) v.value_cents
+			SELECT DISTINCT ON (v.asset_id)
+			       v.value_cents * COALESCE(fx.rate_micro, 1000000) / 1000000 AS value_cents
 			FROM valuations v
 			JOIN assets a ON a.id = v.asset_id
+			LEFT JOIN fx_rates fx ON fx.currency = a.currency
 			WHERE v.profile_id = $1 AND a.archived = false
 			  AND a.kind IN ('checking', 'savings')
 			ORDER BY v.asset_id, v.as_of DESC, v.created_at DESC
@@ -194,9 +196,11 @@ func (s *Store) FlowTotals3M(ctx context.Context, profileID string) (income, exp
 func (s *Store) AssetKindValues(ctx context.Context, profileID string) (map[string]money.Cents, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT kind, SUM(value_cents) FROM (
-			SELECT DISTINCT ON (v.asset_id) a.kind, v.value_cents
+			SELECT DISTINCT ON (v.asset_id) a.kind,
+			       v.value_cents * COALESCE(fx.rate_micro, 1000000) / 1000000 AS value_cents
 			FROM valuations v
 			JOIN assets a ON a.id = v.asset_id
+			LEFT JOIN fx_rates fx ON fx.currency = a.currency
 			WHERE v.profile_id = $1 AND a.archived = false
 			ORDER BY v.asset_id, v.as_of DESC, v.created_at DESC
 		) lv GROUP BY kind`, profileID)

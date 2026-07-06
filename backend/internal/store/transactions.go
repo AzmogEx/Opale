@@ -33,6 +33,7 @@ type Transaction struct {
 	CategoryID   *string     `json:"category_id,omitempty"`
 	CategoryName *string     `json:"category_name,omitempty"`
 	Note         string      `json:"note"`
+	SpaceID      *string     `json:"space_id,omitempty"` // dépense commune (EF-007)
 	CreatedAt    time.Time   `json:"created_at"`
 	UpdatedAt    time.Time   `json:"updated_at"`
 }
@@ -40,7 +41,7 @@ type Transaction struct {
 const txSelect = `
 	SELECT t.id, t.profile_id, t.asset_id, t.amount_cents, t.occurred_on,
 	       t.label, t.raw_label, t.merchant_key, t.category_id, c.name,
-	       t.note, t.created_at, t.updated_at
+	       t.note, t.space_id, t.created_at, t.updated_at
 	FROM transactions t
 	LEFT JOIN categories c ON c.id = t.category_id`
 
@@ -48,7 +49,7 @@ func scanTransaction(row pgx.Row) (Transaction, error) {
 	var t Transaction
 	err := row.Scan(&t.ID, &t.ProfileID, &t.AssetID, &t.Amount, &t.OccurredOn,
 		&t.Label, &t.RawLabel, &t.MerchantKey, &t.CategoryID, &t.CategoryName,
-		&t.Note, &t.CreatedAt, &t.UpdatedAt)
+		&t.Note, &t.SpaceID, &t.CreatedAt, &t.UpdatedAt)
 	return t, err
 }
 

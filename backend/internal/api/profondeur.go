@@ -122,8 +122,9 @@ func (s *Server) handleUpsertProperty(w http.ResponseWriter, r *http.Request) {
 // ── Centre investissement (EF-034) ────────────────────────────────────────────
 
 // investmentKinds : les actifs suivis comme placements.
+// (company_share exclu : les parts de société ont leur centre Entreprise.)
 var investmentKinds = map[string]bool{
-	"pea": true, "cto": true, "life_insurance": true, "crypto": true, "company_share": true,
+	"pea": true, "cto": true, "life_insurance": true, "crypto": true,
 }
 
 // investmentStatus — un placement + sa performance depuis la première valo.
