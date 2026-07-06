@@ -631,4 +631,103 @@ final class APIClient: Sendable {
     func transmission() async throws -> TransmissionSummary {
         try await request("GET", "/v1/transmission")
     }
+
+    // MARK: - Le confort (P7)
+
+    struct ScenarioParams: Encodable {
+        let label: String
+        let monthlySavingsCents: Int64
+        let monthlyExpensesCents: Int64
+        let annualReturnBps: Int
+        let oneTimeCostCents: Int64
+        enum CodingKeys: String, CodingKey {
+            case label
+            case monthlySavingsCents = "monthly_savings_cents"
+            case monthlyExpensesCents = "monthly_expenses_cents"
+            case annualReturnBps = "annual_return_bps"
+            case oneTimeCostCents = "one_time_cost_cents"
+        }
+    }
+
+    func compareScenarios(a: ScenarioParams, b: ScenarioParams, months: Int = 240) async throws -> ScenarioComparison {
+        struct Req: Encodable {
+            let a: ScenarioParams
+            let b: ScenarioParams
+            let months: Int
+        }
+        return try await request("POST", "/v1/scenarios/compare", body: Req(a: a, b: b, months: months))
+    }
+
+    func companies() async throws -> [CompanyStatus] {
+        struct Env: Decodable { let companies: [CompanyStatus]? }
+        let env: Env = try await request("GET", "/v1/company")
+        return env.companies ?? []
+    }
+
+    struct CompanyRequest: Encodable {
+        let siren: String
+        let ownershipBps: Int
+        let ccaCents: Int64
+        let annualDividendsCents: Int64
+        let monthlySalaryCents: Int64
+        enum CodingKeys: String, CodingKey {
+            case siren
+            case ownershipBps = "ownership_bps"
+            case ccaCents = "cca_cents"
+            case annualDividendsCents = "annual_dividends_cents"
+            case monthlySalaryCents = "monthly_salary_cents"
+        }
+    }
+
+    func upsertCompany(assetID: String, _ req: CompanyRequest) async throws {
+        let _: CompanyDetails = try await request("PUT", "/v1/assets/\(assetID)/company", body: req)
+    }
+
+    func bankStatus() async throws -> BankStatus {
+        try await request("GET", "/v1/bank/status")
+    }
+
+    func bankInstitutions(country: String = "fr") async throws -> [BankInstitution] {
+        struct Env: Decodable { let institutions: [BankInstitution]? }
+        let env: Env = try await request("GET", "/v1/bank/institutions",
+                                         query: [URLQueryItem(name: "country", value: country)])
+        return env.institutions ?? []
+    }
+
+    struct BankConnectResponse: Decodable {
+        let link: BankLink
+        let consentLink: String
+        enum CodingKeys: String, CodingKey {
+            case link
+            case consentLink = "consent_link"
+        }
+    }
+
+    func bankConnect(institutionID: String, institutionName: String, assetID: String) async throws -> BankConnectResponse {
+        struct Req: Encodable {
+            let institutionID: String
+            let institutionName: String
+            let assetID: String
+            enum CodingKeys: String, CodingKey {
+                case institutionID = "institution_id"
+                case institutionName = "institution_name"
+                case assetID = "asset_id"
+            }
+        }
+        return try await request("POST", "/v1/bank/connect",
+                                 body: Req(institutionID: institutionID,
+                                           institutionName: institutionName,
+                                           assetID: assetID))
+    }
+
+    func bankSync() async throws -> [BankSyncResult] {
+        struct Env: Decodable { let results: [BankSyncResult]? }
+        struct Empty: Encodable {}
+        let env: Env = try await request("POST", "/v1/bank/sync", body: Empty())
+        return env.results ?? []
+    }
+
+    func bankDisconnect(id: String) async throws {
+        let _: EmptyResponse = try await request("DELETE", "/v1/bank/links/\(id)")
+    }
 }

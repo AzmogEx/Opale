@@ -719,6 +719,128 @@ struct TransmissionSummary: Codable, Hashable, Sendable {
     }
 }
 
+// MARK: - Le confort (P7)
+
+/// Un scénario du comparateur (EF-044).
+struct ScenarioResult: Codable, Hashable, Sendable {
+    var label: String
+    var points: [ProjectionPoint]
+    var independence: IndependenceResult
+    var at5y: Cents
+    var at10y: Cents
+    var atEnd: Cents
+
+    enum CodingKeys: String, CodingKey {
+        case label, points, independence
+        case at5y = "at_5y_cents"
+        case at10y = "at_10y_cents"
+        case atEnd = "at_end_cents"
+    }
+}
+
+/// Résultat complet de la comparaison de deux futurs.
+struct ScenarioComparison: Codable, Hashable, Sendable {
+    var start: Cents
+    var months: Int
+    var a: ScenarioResult
+    var b: ScenarioResult
+    var delta5y: Cents
+    var delta10y: Cents
+    var deltaEnd: Cents
+
+    enum CodingKeys: String, CodingKey {
+        case a, b, months
+        case start = "start_cents"
+        case delta5y = "delta_5y_cents"
+        case delta10y = "delta_10y_cents"
+        case deltaEnd = "delta_end_cents"
+    }
+}
+
+/// Détails de parts de société (EF-036).
+struct CompanyDetails: Codable, Hashable, Sendable {
+    var siren: String
+    var ownershipBps: Int
+    var cca: Cents
+    var annualDividends: Cents
+    var monthlySalary: Cents
+
+    enum CodingKeys: String, CodingKey {
+        case siren
+        case ownershipBps = "ownership_bps"
+        case cca = "cca_cents"
+        case annualDividends = "annual_dividends_cents"
+        case monthlySalary = "monthly_salary_cents"
+    }
+}
+
+/// Une société + les indicateurs dérivés. La valorisation de l'actif = la
+/// valeur de MA part (c'est elle qui entre dans le patrimoine net).
+struct CompanyStatus: Codable, Hashable, Identifiable, Sendable {
+    var asset: Asset
+    var details: CompanyDetails
+    var companyValue: Cents
+    var myTotal: Cents
+    var dividendsNet: Cents
+
+    var id: String { asset.id }
+
+    enum CodingKeys: String, CodingKey {
+        case asset, details
+        case companyValue = "company_value_cents"
+        case myTotal = "my_total_cents"
+        case dividendsNet = "dividends_net_cents"
+    }
+}
+
+/// Une banque connectée via GoCardless (EF-071).
+struct BankLink: Codable, Hashable, Identifiable, Sendable {
+    var id: String
+    var assetID: String
+    var assetName: String?
+    var institutionName: String
+    var status: String // created | linked
+    var lastSyncedAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case id, status
+        case assetID = "asset_id"
+        case assetName = "asset_name"
+        case institutionName = "institution_name"
+        case lastSyncedAt = "last_synced_at"
+    }
+}
+
+/// État de la synchro bancaire.
+struct BankStatus: Codable, Hashable, Sendable {
+    var configured: Bool
+    var links: [BankLink]?
+}
+
+/// Une banque proposée à la connexion.
+struct BankInstitution: Codable, Hashable, Identifiable, Sendable {
+    var id: String
+    var name: String
+    var logo: String
+}
+
+/// Résultat de synchro d'une banque.
+struct BankSyncResult: Codable, Hashable, Identifiable, Sendable {
+    var linkID: String
+    var institution: String
+    var status: String // synced | pending_consent | error
+    var imported: Int
+    var duplicates: Int
+    var error: String?
+
+    var id: String { linkID }
+
+    enum CodingKeys: String, CodingKey {
+        case institution, status, imported, duplicates, error
+        case linkID = "link_id"
+    }
+}
+
 // MARK: - Enveloppes de listes renvoyées par l'API
 
 struct AssetsEnvelope: Codable, Sendable { let assets: [Asset] }

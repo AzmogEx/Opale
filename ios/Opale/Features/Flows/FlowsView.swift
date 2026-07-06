@@ -16,6 +16,7 @@ struct FlowsView: View {
     @State private var editing: Transaction?
     @State private var showManualForm = false
     @State private var showImport = false
+    @State private var showBank = false
 
     /// Sous-vues de l'onglet Flux (EF-020 / EF-028 / EF-025-027).
     enum Segment: String, CaseIterable, Identifiable {
@@ -63,9 +64,15 @@ struct FlowsView: View {
                         } label: {
                             Label("Importer un relevé (CSV)", systemImage: "square.and.arrow.down")
                         }
+                        Button {
+                            showBank = true
+                        } label: {
+                            Label("Ma banque (synchro)", systemImage: "building.columns")
+                        }
                     } label: {
                         Image(systemName: "plus")
                     }
+                    .accessibilityLabel("Ajouter")
                 }
             }
             .task(id: monthKey + "|" + searchText) { await load() }
@@ -85,6 +92,9 @@ struct FlowsView: View {
                 ImportCSVSheet {
                     Task { await load() }
                 }
+            }
+            .sheet(isPresented: $showBank) {
+                BankSheet { Task { await load() } }
             }
         }
     }

@@ -367,13 +367,21 @@ struct HomeView: View {
                 .compactMap(\.latestValue)
                 .reduce(.zero, +)
 
+            let loadedNetWorth = try await netWorth
+            let loadedHistory = try await history
             viewState = .loaded(Snapshot(
-                netWorth: try await netWorth,
-                history: try await history,
+                netWorth: loadedNetWorth,
+                history: loadedHistory,
                 cash: cash,
                 health: try? await health,
                 alerts: (try? await alerts) ?? []
             ))
+
+            // Publie l'instantané pour le widget (App Group, local uniquement).
+            WidgetBridge.publish(
+                netWorthCents: loadedNetWorth.net.raw,
+                historyCents: loadedHistory.points.map(\.net.raw)
+            )
         } catch {
             viewState = .error(error.localizedDescription)
         }

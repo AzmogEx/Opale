@@ -31,9 +31,9 @@ final class SmokeTests: XCTestCase {
             .firstMatch
         XCTAssertTrue(heroLabel.waitForExistence(timeout: 10), "Le héro Patrimoine net doit s'afficher")
 
-        // Le montant vérifié en E2E (109 800 € depuis P6) doit apparaître.
+        // Le montant vérifié en E2E (229 800 € depuis P7) doit apparaître.
         let amount = app.staticTexts
-            .matching(NSPredicate(format: "label CONTAINS '109' AND label CONTAINS '800'"))
+            .matching(NSPredicate(format: "label CONTAINS '229' AND label CONTAINS '800'"))
             .firstMatch
         XCTAssertTrue(amount.waitForExistence(timeout: 5), "Le montant du patrimoine doit être visible")
 
@@ -152,5 +152,32 @@ final class SmokeTests: XCTestCase {
             placements.tap()
         }
         XCTAssertTrue(repartition.waitForExistence(timeout: 10), "La répartition des placements doit s'afficher")
+
+        // 12. Le confort (P7, EF-044) : le comparateur de scénarios tranche.
+        tabBar.buttons["Projection"].tap()
+        let comparer = app.buttons["Comparer"]
+        XCTAssertTrue(comparer.waitForExistence(timeout: 10), "Le bouton Comparer doit exister")
+        comparer.tap()
+        let lancer = app.buttons["Comparer ces deux futurs"]
+        XCTAssertTrue(lancer.waitForExistence(timeout: 5), "Le comparateur doit s'ouvrir")
+        lancer.tap()
+        let verdict = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS[c] 'verdict'"))
+            .firstMatch
+        XCTAssertTrue(verdict.waitForExistence(timeout: 10), "Le verdict de comparaison doit s'afficher")
+        app.buttons["Fermer"].tap()
+
+        // 13. P7, EF-071 : la synchro bancaire annonce proprement son état.
+        tabBar.buttons["Flux"].tap()
+        let ajouter = app.buttons["Ajouter"]
+        XCTAssertTrue(ajouter.waitForExistence(timeout: 5), "Le menu Ajouter doit exister")
+        ajouter.tap()
+        let banque = app.buttons["Ma banque (synchro)"]
+        XCTAssertTrue(banque.waitForExistence(timeout: 5), "L'entrée Ma banque doit exister")
+        banque.tap()
+        let etatBanque = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS[c] 'non configurée' OR label CONTAINS[c] 'banques connectées'"))
+            .firstMatch
+        XCTAssertTrue(etatBanque.waitForExistence(timeout: 10), "L'état de la synchro bancaire doit s'afficher")
     }
 }

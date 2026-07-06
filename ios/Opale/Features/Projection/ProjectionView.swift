@@ -16,6 +16,7 @@ struct ProjectionView: View {
 
     @State private var result: ProjectionResponse?
     @State private var errorMessage: String?
+    @State private var showComparison = false
 
     var body: some View {
         NavigationStack {
@@ -51,6 +52,18 @@ struct ProjectionView: View {
             }
             .navigationTitle("Projection")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showComparison = true
+                    } label: {
+                        Label("Comparer", systemImage: "arrow.triangle.branch")
+                    }
+                }
+            }
+            .sheet(isPresented: $showComparison) {
+                ComparisonView()
+            }
             // Recharge à chaque changement d'hypothèse (annule la requête
             // précédente automatiquement).
             .task(id: "\(savingsEuros)-\(returnBps)-\(expensesEuros)") {

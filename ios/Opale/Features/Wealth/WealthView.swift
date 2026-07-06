@@ -73,6 +73,7 @@ struct WealthView: View {
                 case .realEstate: RealEstateView()
                 case .investments: InvestmentsView()
                 case .objects: ObjectsView()
+                case .company: CompanyView()
                 case .timeline: TimelineView()
                 case .vault: VaultView()
                 case .transmission: TransmissionView()
@@ -217,7 +218,7 @@ struct WealthView: View {
 
 /// Les six centres de la profondeur patrimoniale.
 enum WealthCenter: String, CaseIterable, Identifiable, Hashable {
-    case realEstate, investments, objects, timeline, vault, transmission
+    case realEstate, investments, objects, company, timeline, vault, transmission
 
     var id: String { rawValue }
 
@@ -226,6 +227,7 @@ enum WealthCenter: String, CaseIterable, Identifiable, Hashable {
         case .realEstate: "Immobilier"
         case .investments: "Placements"
         case .objects: "Objets"
+        case .company: "Entreprise"
         case .timeline: "Timeline"
         case .vault: "Coffre-fort"
         case .transmission: "Transmission"
@@ -237,6 +239,7 @@ enum WealthCenter: String, CaseIterable, Identifiable, Hashable {
         case .realEstate: "house.fill"
         case .investments: "chart.pie.fill"
         case .objects: "sparkle.magnifyingglass"
+        case .company: "briefcase.fill"
         case .timeline: "calendar.day.timeline.left"
         case .vault: "lock.doc.fill"
         case .transmission: "figure.2.and.child.holdinghands"

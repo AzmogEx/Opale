@@ -71,6 +71,7 @@ final class SessionStore {
     func logout() async {
         try? await api.logout()
         Keychain.delete(Self.tokenKey)
+        WidgetBridge.clear() // le widget ne doit pas survivre à la session
         state = .loggedOut
     }
 }

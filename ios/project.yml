@@ -23,11 +23,14 @@ targets:
     platform: iOS
     sources:
       - Opale
+    dependencies:
+      - target: OpaleWidget
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.opale.ios
         TARGETED_DEVICE_FAMILY: "1"          # iPhone d'abord (P1)
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        CODE_SIGN_ENTITLEMENTS: Opale/Opale.entitlements
     info:
       path: Opale/Info.plist
       properties:
@@ -36,6 +39,25 @@ targets:
         # Autorise l'API locale (simulateur → localhost, homelab en LAN).
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+
+  # Widget « Patrimoine net » (P7) : lit un instantané écrit par l'app dans
+  # l'App Group — aucun réseau, aucun secret côté widget.
+  OpaleWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - OpaleWidget
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.opale.ios.widget
+        CODE_SIGN_ENTITLEMENTS: OpaleWidget/OpaleWidget.entitlements
+        SKIP_INSTALL: YES
+    info:
+      path: OpaleWidget/Info.plist
+      properties:
+        CFBundleDisplayName: Opale
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
 
   OpaleUITests:
     type: bundle.ui-testing
