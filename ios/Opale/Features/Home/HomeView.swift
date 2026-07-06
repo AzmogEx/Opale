@@ -135,34 +135,58 @@ struct HomeView: View {
         }
     }
 
-    // MARK: - Analyses (transition héros : la carte DEVIENT l'écran)
+    // MARK: - Analyses & Abonnements (transitions héros)
 
     private var analyticsCard: some View {
+        HStack(spacing: 12) {
+            featureCard(
+                id: "analytics",
+                icon: "chart.pie.fill",
+                title: "Analyses",
+                subtitle: "Où part l'argent ?"
+            ) {
+                AnalyticsView()
+            }
+            featureCard(
+                id: "subscriptions",
+                icon: "repeat.circle.fill",
+                title: "Abonnements",
+                subtitle: "Le vrai coût / an"
+            ) {
+                SubscriptionsView()
+            }
+        }
+    }
+
+    /// Une carte-fonctionnalité qui DEVIENT son écran (zoom héros).
+    private func featureCard(
+        id: String,
+        icon: String,
+        title: String,
+        subtitle: String,
+        @ViewBuilder destination: @escaping () -> some View
+    ) -> some View {
         NavigationLink {
-            AnalyticsView()
-                .navigationTransition(.zoom(sourceID: "analytics", in: zoomSpace))
+            destination()
+                .navigationTransition(.zoom(sourceID: id, in: zoomSpace))
         } label: {
             GlassCard {
-                HStack(spacing: 12) {
-                    Image(systemName: "chart.pie.fill")
+                VStack(alignment: .leading, spacing: 6) {
+                    Image(systemName: icon)
                         .font(.title2)
                         .foregroundStyle(OpaleTheme.iridescent)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Analyses")
-                            .font(.headline)
-                        Text("Où part l'argent, chez qui, mieux qu'avant ?")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(.tertiary)
+                    Text(title)
+                        .font(.subheadline.weight(.bold))
+                    Text(subtitle)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .buttonStyle(.pressable)
-        .matchedTransitionSource(id: "analytics", in: zoomSpace)
+        .matchedTransitionSource(id: id, in: zoomSpace)
     }
 
     // MARK: - Héro : patrimoine net

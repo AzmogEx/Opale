@@ -33,26 +33,28 @@ struct FlowsView: View {
         month.formatted(.iso8601.year().month())
     }
 
+    /// Sélection glissante des segments (pill qui voyage).
+    @Namespace private var segmentSpace
+    @FocusState private var searchFocused: Bool
+
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                Picker("Vue", selection: $segment) {
-                    ForEach(Segment.allCases) { s in
-                        Text(s.rawValue).tag(s)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal)
-                .padding(.bottom, 4)
+            ZStack {
+                // Le fond signature couvre TOUTE la page — plus de bloc noir.
+                OpaleBackdrop()
 
-                switch segment {
-                case .movements: movementsList
-                case .envelopes: EnvelopesView()
-                case .upcoming: UpcomingView()
-                case .shared: SharedSpaceView()
+                VStack(spacing: 12) {
+                    header
+                    switch segment {
+                    case .movements: movementsList
+                    case .envelopes: EnvelopesView()
+                    case .upcoming: UpcomingView()
+                    case .shared: SharedSpaceView()
+                    }
                 }
             }
             .navigationTitle("Flux")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
@@ -101,22 +103,79 @@ struct FlowsView: View {
         }
     }
 
+    // MARK: - En-tête custom : recherche en verre + pills animées
+
+    private var header: some View {
+        VStack(spacing: 10) {
+            // Recherche — une barre de verre, pas le bloc système.
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("Rechercher un mouvement", text: $searchText)
+                    .focused($searchFocused)
+                    .submitLabel(.search)
+                if !searchText.isEmpty {
+                    Button {
+                        searchText = ""
+                        searchFocused = false
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .glassEffect(.regular, in: .capsule)
+
+            // Segments : la pill de sélection GLISSE d'un onglet à l'autre.
+            HStack(spacing: 4) {
+                ForEach(Segment.allCases) { s in
+                    Button {
+                        withAnimation(.snappy(duration: 0.3)) { segment = s }
+                    } label: {
+                        Text(s.rawValue)
+                            .font(.footnote.weight(segment == s ? .bold : .medium))
+                            .foregroundStyle(segment == s ? OpaleTheme.accent : .secondary)
+                            .padding(.vertical, 8)
+                            .frame(maxWidth: .infinity)
+                            .background {
+                                if segment == s {
+                                    Capsule()
+                                        .fill(OpaleTheme.accent.opacity(0.16))
+                                        .matchedGeometryEffect(id: "pill", in: segmentSpace)
+                                }
+                            }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(4)
+            .glassEffect(.regular, in: .capsule)
+            .sensoryFeedback(.selection, trigger: segment)
+        }
+        .padding(.horizontal)
+    }
+
     // MARK: - Segment Mouvements (EF-020)
 
     private var movementsList: some View {
-        List {
-            monthHeader
-            if let summary {
-                summarySection(summary)
+        ScrollView {
+            VStack(spacing: 14) {
+                monthHeader
+                if let summary {
+                    summaryTiles(summary)
+                }
+                transactionSections
+                if let errorMessage {
+                    Text(errorMessage).foregroundStyle(OpaleTheme.loss)
+                }
             }
-            transactionSections
-            if let errorMessage {
-                Text(errorMessage).foregroundStyle(OpaleTheme.loss)
-            }
+            .padding(.horizontal)
+            .padding(.bottom, 24)
         }
-        .listStyle(.insetGrouped)
-        .opaleList()
-        .searchable(text: $searchText, prompt: "Rechercher un mouvement")
+        .scrollEdgeEffectStyle(.soft, for: .top)
+        .scrollDismissesKeyboard(.immediately)
     }
 
     // MARK: - Navigation de mois
@@ -129,7 +188,7 @@ struct FlowsView: View {
                 Image(systemName: "chevron.left")
             }
             Spacer()
-            Text(month.formatted(.dateTime.month(.wide).year()))
+            Text(month.formatted(.dateTime.month(.wide).year()).capitalized)
                 .font(.headline)
                 .contentTransition(.numericText())
                 .animation(.snappy, value: month)
@@ -141,8 +200,9 @@ struct FlowsView: View {
             }
             .disabled(isCurrentMonth)
         }
-        .listRowBackground(Color.clear)
         .buttonStyle(.borderless)
+        .padding(.horizontal, 6)
+        .sensoryFeedback(.selection, trigger: month)
     }
 
     private var isCurrentMonth: Bool {
@@ -157,15 +217,11 @@ struct FlowsView: View {
 
     // MARK: - Résumé du mois
 
-    private func summarySection(_ s: MonthSummary) -> some View {
-        Section {
-            HStack(spacing: 12) {
-                summaryTile("Revenus", cents: s.income, tint: OpaleTheme.gain)
-                summaryTile("Dépenses", cents: Cents(-s.expenses.raw), tint: OpaleTheme.loss)
-                summaryTile("Solde", cents: s.net, tint: OpaleTheme.accent)
-            }
-            .listRowInsets(EdgeInsets())
-            .listRowBackground(Color.clear)
+    private func summaryTiles(_ s: MonthSummary) -> some View {
+        HStack(spacing: 12) {
+            summaryTile("Revenus", cents: s.income, tint: OpaleTheme.gain)
+            summaryTile("Dépenses", cents: Cents(-s.expenses.raw), tint: OpaleTheme.loss)
+            summaryTile("Solde", cents: s.net, tint: OpaleTheme.accent)
         }
     }
 
@@ -198,27 +254,53 @@ struct FlowsView: View {
     @ViewBuilder
     private var transactionSections: some View {
         if transactions.isEmpty {
-            ContentUnavailableView(
-                "Aucun mouvement",
-                systemImage: "arrow.left.arrow.right",
-                description: Text("Importe un relevé CSV ou ajoute une transaction avec le bouton +.")
+            EmptyStateView(
+                icon: "arrow.left.arrow.right",
+                title: "Aucun mouvement",
+                message: "Importe un relevé CSV ou ajoute une transaction avec le bouton +."
             )
-            .listRowBackground(Color.clear)
         } else {
-            ForEach(grouped, id: \.day) { group in
-                Section(group.day.formatted(.dateTime.weekday(.wide).day().month(.wide))) {
-                    ForEach(group.items) { tx in
-                        Button {
-                            editing = tx
-                        } label: {
-                            TransactionRow(transaction: tx, categories: categories)
+            // Une carte de verre par jour — l'écran respire.
+            ForEach(Array(grouped.enumerated()), id: \.element.day) { index, group in
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(group.day.formatted(.dateTime.weekday(.wide).day().month(.wide)).capitalized)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 6)
+
+                    GlassCard {
+                        VStack(spacing: 0) {
+                            ForEach(group.items) { tx in
+                                Button {
+                                    editing = tx
+                                } label: {
+                                    TransactionRow(transaction: tx, categories: categories)
+                                        .contentShape(.rect)
+                                }
+                                .buttonStyle(.pressable)
+                                .contextMenu {
+                                    Button {
+                                        editing = tx
+                                    } label: {
+                                        Label("Modifier", systemImage: "square.and.pencil")
+                                    }
+                                    Button(role: .destructive) {
+                                        Task {
+                                            try? await session.api.deleteTransaction(id: tx.id)
+                                            await load()
+                                        }
+                                    } label: {
+                                        Label("Supprimer", systemImage: "trash")
+                                    }
+                                }
+                                if tx.id != group.items.last?.id {
+                                    Divider().padding(.leading, 50)
+                                }
+                            }
                         }
-                        .buttonStyle(.plain)
-                    }
-                    .onDelete { indexSet in
-                        Task { await delete(at: indexSet, in: group.items) }
                     }
                 }
+                .cascadeIn(index)
             }
         }
     }
@@ -249,12 +331,6 @@ struct FlowsView: View {
         }
     }
 
-    private func delete(at indexSet: IndexSet, in items: [Transaction]) async {
-        for index in indexSet {
-            try? await session.api.deleteTransaction(id: items[index].id)
-        }
-        await load()
-    }
 }
 
 // MARK: - Ligne de transaction

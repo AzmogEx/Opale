@@ -18,6 +18,9 @@ struct OpaleApp: App {
                 .environment(\.discreetMode, session.discreetMode)
                 .tint(OpaleTheme.accent)
                 .fontDesign(.rounded) // typo signature — chaleureuse, lisible
+                // L'app est française : dates et nombres en français, quel
+                // que soit le réglage de langue de l'appareil.
+                .environment(\.locale, Locale(identifier: "fr_FR"))
                 // Verrouillage (ENF-004) : masque le contenu dès qu'on quitte.
                 .overlay {
                     if lock.locked {

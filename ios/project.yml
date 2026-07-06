@@ -40,6 +40,11 @@ targets:
       path: Opale/Info.plist
       properties:
         CFBundleDisplayName: Opale
+        # L'app est française : quel que soit le réglage de l'appareil,
+        # dates et nombres se formatent en français (Locale.current suit
+        # la localisation du bundle).
+        CFBundleDevelopmentRegion: fr
+        CFBundleLocalizations: [fr]
         UILaunchScreen: {}
         # Autorise l'API locale (simulateur → localhost, homelab en LAN).
         NSAppTransportSecurity:

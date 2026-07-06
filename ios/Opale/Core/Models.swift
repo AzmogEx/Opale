@@ -531,6 +531,32 @@ struct MonthAnalytics: Codable, Hashable, Sendable {
     }
 }
 
+/// Un abonnement détecté + son poids sur la liberté.
+struct SubscriptionStatus: Codable, Hashable, Identifiable, Sendable {
+    var merchantKey: String
+    var label: String
+    var amount: Cents
+    var intervalDays: Int
+    var periodicity: String
+    var nextDate: Date
+    var monthlyCost: Cents
+    var yearlyCost: Cents
+    var freedomGainMonths: Int
+
+    var id: String { merchantKey }
+
+    enum CodingKeys: String, CodingKey {
+        case label, periodicity
+        case merchantKey = "merchant_key"
+        case amount = "amount_cents"
+        case intervalDays = "interval_days"
+        case nextDate = "next_date"
+        case monthlyCost = "monthly_cost_cents"
+        case yearlyCost = "yearly_cost_cents"
+        case freedomGainMonths = "freedom_gain_months"
+    }
+}
+
 /// Bilan mensuel intelligent (EF-062).
 struct MonthlyReview: Codable, Hashable, Sendable {
     var year: Int

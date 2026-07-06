@@ -379,6 +379,21 @@ final class APIClient: Sendable {
         return try await request("GET", "/v1/analytics", query: query)
     }
 
+    func subscriptions() async throws -> (items: [SubscriptionStatus], monthly: Cents, yearly: Cents) {
+        struct Env: Decodable {
+            let subscriptions: [SubscriptionStatus]?
+            let totalMonthly: Cents
+            let totalYearly: Cents
+            enum CodingKeys: String, CodingKey {
+                case subscriptions
+                case totalMonthly = "total_monthly_cents"
+                case totalYearly = "total_yearly_cents"
+            }
+        }
+        let env: Env = try await request("GET", "/v1/subscriptions")
+        return (env.subscriptions ?? [], env.totalMonthly, env.totalYearly)
+    }
+
     func alerts() async throws -> [OpaleAlert] {
         struct Env: Decodable { let alerts: [OpaleAlert] }
         let env: Env = try await request("GET", "/v1/alerts")
