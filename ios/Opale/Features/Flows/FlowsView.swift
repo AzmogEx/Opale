@@ -115,6 +115,7 @@ struct FlowsView: View {
             }
         }
         .listStyle(.insetGrouped)
+        .opaleList()
         .searchable(text: $searchText, prompt: "Rechercher un mouvement")
     }
 
@@ -268,10 +269,16 @@ struct TransactionRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.body)
-                .foregroundStyle(transaction.categoryID == nil ? AnyShapeStyle(.tertiary) : AnyShapeStyle(OpaleTheme.accent))
-                .frame(width: 30)
+            // Pastille dégradée façon avatar de marchand.
+            ZStack {
+                Circle()
+                    .fill(OpaleTheme.iridescent)
+                    .opacity(transaction.categoryID == nil ? 0.10 : 0.18)
+                Image(systemName: icon)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(transaction.categoryID == nil ? AnyShapeStyle(.tertiary) : AnyShapeStyle(OpaleTheme.iridescent))
+            }
+            .frame(width: 38, height: 38)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(transaction.label)

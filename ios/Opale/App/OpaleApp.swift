@@ -17,6 +17,7 @@ struct OpaleApp: App {
                 .environment(lock)
                 .environment(\.discreetMode, session.discreetMode)
                 .tint(OpaleTheme.accent)
+                .fontDesign(.rounded) // typo signature — chaleureuse, lisible
                 // Verrouillage (ENF-004) : masque le contenu dès qu'on quitte.
                 .overlay {
                     if lock.locked {

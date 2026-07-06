@@ -35,6 +35,7 @@ struct TimelineView: View {
                 }
             }
         }
+        .opaleList()
         .navigationTitle("Timeline")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }

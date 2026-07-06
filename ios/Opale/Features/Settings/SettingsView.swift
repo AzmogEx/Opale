@@ -43,6 +43,7 @@ struct SettingsView: View {
 					}
 				}
 			}
+			.opaleList()
 			.navigationTitle("Réglages")
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
@@ -126,9 +127,20 @@ struct SettingsView: View {
 		}
 	}
 
+	@State private var soundsOn = SoundPlayer.enabled
+
 	private var privacySection: some View {
 		Section("Confidentialité") {
 			@Bindable var session = session
+			Toggle(isOn: $soundsOn) {
+				VStack(alignment: .leading, spacing: 2) {
+					Text("Sons discrets")
+					Text("Petits sons sur les moments clés (célébrations, envoi)")
+						.font(.caption)
+						.foregroundStyle(.secondary)
+				}
+			}
+			.onChange(of: soundsOn) { _, new in SoundPlayer.enabled = new }
 			Toggle(isOn: $session.discreetMode) {
 				VStack(alignment: .leading, spacing: 2) {
 					Text("Mode discret")

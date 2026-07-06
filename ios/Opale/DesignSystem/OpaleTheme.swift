@@ -29,3 +29,42 @@ enum OpaleTheme {
         return .secondary
     }
 }
+
+/// Fond signature d'Opale : voile irisé en clair, **nuit profonde avec
+/// lueurs** en sombre — le sombre est une identité, pas un défaut.
+struct OpaleBackdrop: View {
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        ZStack {
+            if scheme == .dark {
+                // Nuit profonde (même encre que l'icône).
+                Color(red: 0.045, green: 0.055, blue: 0.09)
+                RadialGradient(
+                    colors: [OpaleTheme.accent.opacity(0.16), .clear],
+                    center: .init(x: 0.15, y: 0.05), startRadius: 0, endRadius: 480
+                )
+                RadialGradient(
+                    colors: [Color(red: 0.71, green: 0.54, blue: 0.79).opacity(0.13), .clear],
+                    center: .init(x: 0.95, y: 0.4), startRadius: 0, endRadius: 460
+                )
+                RadialGradient(
+                    colors: [Color(red: 0.51, green: 0.62, blue: 0.87).opacity(0.10), .clear],
+                    center: .init(x: 0.4, y: 1.05), startRadius: 0, endRadius: 520
+                )
+            } else {
+                OpaleTheme.iridescent.opacity(0.14)
+            }
+        }
+        .ignoresSafeArea()
+    }
+}
+
+extension View {
+    /// Habillage signature des listes : fini le gris système — les
+    /// rangées de verre flottent sur le fond irisé/nuit d'Opale.
+    func opaleList() -> some View {
+        self.scrollContentBackground(.hidden)
+            .background(OpaleBackdrop())
+    }
+}

@@ -41,6 +41,7 @@ struct EnvelopesView: View {
             }
         }
         .task { await load() }
+        .scrollContentBackground(.hidden)
         .refreshable { await load() }
         .sheet(isPresented: $showAdd) {
             EnvelopeFormSheet(
@@ -221,6 +222,7 @@ struct UpcomingView: View {
             }
         }
         .task { await load() }
+        .scrollContentBackground(.hidden)
         .refreshable { await load() }
     }
 

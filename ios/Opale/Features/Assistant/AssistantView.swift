@@ -28,9 +28,7 @@ struct AssistantView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                OpaleTheme.iridescent
-                    .opacity(0.14)
-                    .ignoresSafeArea()
+                OpaleBackdrop()
 
                 VStack(spacing: 0) {
                     ScrollViewReader { proxy in
@@ -258,6 +256,7 @@ struct AssistantView: View {
         let question = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !isThinking else { return }
         draft = ""
+        SoundPlayer.play(.send)
         ask(question, allowCloud: false)
     }
 

@@ -34,6 +34,8 @@ struct HomeView: View {
     @State private var viewState: ViewState = .loading
     @State private var selectedDate: Date?
     @State private var showSettings = false
+    /// Transition héros vers l'écran Analyses.
+    @Namespace private var zoomSpace
 
     // Célébration de palier (EF-016) : dernier palier déjà fêté (euros).
     @AppStorage("home.celebratedMilestone") private var celebratedMilestone = 0
@@ -85,11 +87,9 @@ struct HomeView: View {
         }
     }
 
-    /// Fond : voile irisé très léger, signature visuelle d'Opale.
+    /// Fond signature : voile irisé en clair, nuit à lueurs en sombre.
     private var backdrop: some View {
-        OpaleTheme.iridescent
-            .opacity(0.14)
-            .ignoresSafeArea()
+        OpaleBackdrop()
     }
 
     @ViewBuilder
@@ -118,11 +118,13 @@ struct HomeView: View {
                             .cascadeIn(1)
                         chartCard(snapshot)
                             .cascadeIn(2)
-                        statsRow(snapshot)
+                        analyticsCard
                             .cascadeIn(3)
+                        statsRow(snapshot)
+                            .cascadeIn(4)
                         if let health = snapshot.health {
                             healthCard(health)
-                                .cascadeIn(4)
+                                .cascadeIn(5)
                         }
                     }
                     .padding(.horizontal)
@@ -131,6 +133,36 @@ struct HomeView: View {
             }
             .scrollEdgeEffectStyle(.soft, for: .top)
         }
+    }
+
+    // MARK: - Analyses (transition héros : la carte DEVIENT l'écran)
+
+    private var analyticsCard: some View {
+        NavigationLink {
+            AnalyticsView()
+                .navigationTransition(.zoom(sourceID: "analytics", in: zoomSpace))
+        } label: {
+            GlassCard {
+                HStack(spacing: 12) {
+                    Image(systemName: "chart.pie.fill")
+                        .font(.title2)
+                        .foregroundStyle(OpaleTheme.iridescent)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Analyses")
+                            .font(.headline)
+                        Text("Où part l'argent, chez qui, mieux qu'avant ?")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .buttonStyle(.pressable)
+        .matchedTransitionSource(id: "analytics", in: zoomSpace)
     }
 
     // MARK: - Héro : patrimoine net
@@ -435,6 +467,7 @@ struct HomeView: View {
         }
         guard reached > celebratedMilestone else { return }
         celebratedMilestone = reached
+        SoundPlayer.play(.success)
         withAnimation(.easeIn(duration: 0.2)) { showConfetti = true }
         Task {
             try? await Task.sleep(for: .seconds(4))

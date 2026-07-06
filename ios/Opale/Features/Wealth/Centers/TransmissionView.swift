@@ -104,6 +104,7 @@ struct TransmissionView: View {
                 ProgressView()
             }
         }
+        .opaleList()
         .navigationTitle("Transmission")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }

@@ -31,6 +31,7 @@ struct CompanyView: View {
                 }
             }
         }
+        .opaleList()
         .navigationTitle("Entreprise")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }

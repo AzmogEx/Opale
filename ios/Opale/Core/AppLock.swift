@@ -61,6 +61,7 @@ final class AppLock {
 	func unlock() async {
 		guard locked, !authenticating else { return }
 		if await authenticate(reason: "Déverrouiller Opale") {
+			SoundPlayer.play(.unlock)
 			withAnimation(.easeOut(duration: 0.3)) { locked = false }
 		}
 	}

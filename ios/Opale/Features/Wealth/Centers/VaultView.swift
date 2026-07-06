@@ -63,6 +63,7 @@ struct VaultView: View {
                 Text(errorMessage).foregroundStyle(OpaleTheme.loss)
             }
         }
+        .opaleList()
         .navigationTitle("Coffre-fort")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

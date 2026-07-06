@@ -21,9 +21,7 @@ struct ProjectionView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                OpaleTheme.iridescent
-                    .opacity(0.14)
-                    .ignoresSafeArea()
+                OpaleBackdrop()
 
                 ScrollView {
                     GlassEffectContainer(spacing: 16) {

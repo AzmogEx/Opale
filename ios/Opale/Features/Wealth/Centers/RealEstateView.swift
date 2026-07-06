@@ -32,6 +32,7 @@ struct RealEstateView: View {
                 }
             }
         }
+        .opaleList()
         .navigationTitle("Immobilier")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }

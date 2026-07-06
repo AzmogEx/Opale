@@ -39,6 +39,8 @@ struct GlassStat: View {
                     .foregroundStyle(.secondary)
                 AmountText(cents: cents, style: .whole)
                     .font(.title3.weight(.bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.55)
             }
         }
     }

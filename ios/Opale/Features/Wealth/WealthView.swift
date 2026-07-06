@@ -18,6 +18,8 @@ struct WealthView: View {
     @State private var viewState: ViewState = .loading
     @State private var activeSheet: Sheet?
     @State private var selectedCenter: WealthCenter?
+    /// Transition héros : la tuile du centre DEVIENT l'écran.
+    @Namespace private var zoomSpace
 
     var body: some View {
         NavigationStack {
@@ -77,15 +79,18 @@ struct WealthView: View {
                 AssetDetailView(asset: asset) { Task { await load() } }
             }
             .navigationDestination(item: $selectedCenter) { center in
-                switch center {
-                case .realEstate: RealEstateView()
-                case .investments: InvestmentsView()
-                case .objects: ObjectsView()
-                case .company: CompanyView()
-                case .timeline: TimelineView()
-                case .vault: VaultView()
-                case .transmission: TransmissionView()
+                Group {
+                    switch center {
+                    case .realEstate: RealEstateView()
+                    case .investments: InvestmentsView()
+                    case .objects: ObjectsView()
+                    case .company: CompanyView()
+                    case .timeline: TimelineView()
+                    case .vault: VaultView()
+                    case .transmission: TransmissionView()
+                    }
                 }
+                .navigationTransition(.zoom(sourceID: center, in: zoomSpace))
             }
             .navigationDestination(for: Liability.self) { liability in
                 LiabilityDetailView(liability: liability) { Task { await load() } }
@@ -121,6 +126,7 @@ struct WealthView: View {
                             .contentShape(.rect)
                         }
                         .buttonStyle(.pressable)
+                        .matchedTransitionSource(id: center, in: zoomSpace)
                     }
                 }
                 .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
@@ -168,6 +174,7 @@ struct WealthView: View {
                 }
             }
         }
+        .opaleList()
     }
 
     private func row(
@@ -177,11 +184,16 @@ struct WealthView: View {
         value: Cents?,
         negative: Bool
     ) -> some View {
-        HStack {
-            Image(systemName: systemImage)
-                .font(.title3)
-                .foregroundStyle(negative ? OpaleTheme.loss : OpaleTheme.accent)
-                .frame(width: 32)
+        HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(negative ? AnyShapeStyle(OpaleTheme.loss.opacity(0.14))
+                                   : AnyShapeStyle(OpaleTheme.iridescent.opacity(0.18)))
+                Image(systemName: systemImage)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(negative ? AnyShapeStyle(OpaleTheme.loss) : AnyShapeStyle(OpaleTheme.iridescent))
+            }
+            .frame(width: 38, height: 38)
             VStack(alignment: .leading, spacing: 2) {
                 Text(name).font(.body.weight(.medium))
                 Text(kindLabel).font(.caption).foregroundStyle(.secondary)

@@ -34,6 +34,7 @@ struct SharedSpaceView: View {
                 Text(errorMessage).foregroundStyle(OpaleTheme.loss)
             }
         }
+        .opaleList()
         .task { await load() }
         .refreshable { await load() }
         .sheet(isPresented: $showAddMember) {

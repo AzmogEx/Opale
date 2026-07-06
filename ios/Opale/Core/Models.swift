@@ -502,6 +502,35 @@ struct CategorySpend: Codable, Hashable, Identifiable, Sendable {
     }
 }
 
+/// Un marchand agrégé (écran Analyses).
+struct MerchantSpend: Codable, Hashable, Identifiable, Sendable {
+    var label: String
+    var count: Int
+    var total: Cents
+
+    var id: String { label }
+
+    enum CodingKeys: String, CodingKey {
+        case label, count
+        case total = "total_cents"
+    }
+}
+
+/// Les analyses d'un mois : catégories, marchands, comparaison.
+struct MonthAnalytics: Codable, Hashable, Sendable {
+    var year: Int
+    var month: Int
+    var summary: MonthSummary
+    var previous: MonthSummary
+    var categories: [CategorySpend]?
+    var topMerchants: [MerchantSpend]?
+
+    enum CodingKeys: String, CodingKey {
+        case year, month, summary, previous, categories
+        case topMerchants = "top_merchants"
+    }
+}
+
 /// Bilan mensuel intelligent (EF-062).
 struct MonthlyReview: Codable, Hashable, Sendable {
     var year: Int

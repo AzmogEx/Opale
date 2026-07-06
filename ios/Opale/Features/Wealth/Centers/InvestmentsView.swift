@@ -41,6 +41,7 @@ struct InvestmentsView: View {
                 }
             }
         }
+        .opaleList()
         .navigationTitle("Placements")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }

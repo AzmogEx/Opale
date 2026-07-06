@@ -27,6 +27,7 @@ struct ObjectsView: View {
                 .buttonStyle(.plain)
             }
         }
+        .opaleList()
         .navigationTitle("Objets")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }

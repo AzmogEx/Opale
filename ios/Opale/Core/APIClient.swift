@@ -372,6 +372,13 @@ final class APIClient: Sendable {
         try await request("GET", "/v1/health-score")
     }
 
+    func analytics(year: Int? = nil, month: Int? = nil) async throws -> MonthAnalytics {
+        var query: [URLQueryItem] = []
+        if let year { query.append(URLQueryItem(name: "year", value: String(year))) }
+        if let month { query.append(URLQueryItem(name: "month", value: String(month))) }
+        return try await request("GET", "/v1/analytics", query: query)
+    }
+
     func alerts() async throws -> [OpaleAlert] {
         struct Env: Decodable { let alerts: [OpaleAlert] }
         let env: Env = try await request("GET", "/v1/alerts")
