@@ -43,22 +43,39 @@ struct MainTabView: View {
 
     var body: some View {
         TabView(selection: $selection) {
-            Tab("Accueil", systemImage: "circle.hexagongrid.fill", value: .home) {
+            Tab(value: .home) {
                 HomeView()
+            } label: {
+                Label("Accueil", systemImage: "circle.hexagongrid.fill")
+                    .symbolEffect(.bounce, value: selection == .home)
             }
-            Tab("Flux", systemImage: "arrow.left.arrow.right", value: .flows) {
+            Tab(value: .flows) {
                 FlowsView()
+            } label: {
+                Label("Flux", systemImage: "arrow.left.arrow.right")
+                    .symbolEffect(.bounce, value: selection == .flows)
             }
-            Tab("Patrimoine", systemImage: "building.columns.fill", value: .wealth) {
+            Tab(value: .wealth) {
                 WealthView()
+            } label: {
+                Label("Patrimoine", systemImage: "building.columns.fill")
+                    .symbolEffect(.bounce, value: selection == .wealth)
             }
-            Tab("Projection", systemImage: "chart.line.uptrend.xyaxis", value: .projection) {
+            Tab(value: .projection) {
                 ProjectionView()
+            } label: {
+                Label("Projection", systemImage: "chart.line.uptrend.xyaxis")
+                    .symbolEffect(.bounce, value: selection == .projection)
             }
-            Tab("Assistant", systemImage: "sparkles", value: .assistant) {
+            Tab(value: .assistant) {
                 AssistantView()
+            } label: {
+                Label("Assistant", systemImage: "sparkles")
+                    .symbolEffect(.bounce, value: selection == .assistant)
             }
         }
+        // Chaque changement d'onglet « clique » sous le doigt.
+        .sensoryFeedback(.selection, trigger: selection)
     }
 }
 

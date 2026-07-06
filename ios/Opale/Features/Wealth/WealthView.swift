@@ -120,7 +120,7 @@ struct WealthView: View {
                             .frame(maxWidth: .infinity, minHeight: 64)
                             .contentShape(.rect)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressable)
                     }
                 }
                 .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))

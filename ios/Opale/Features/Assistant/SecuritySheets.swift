@@ -3,22 +3,8 @@ import SwiftUI
 // Confidentialité & sécurité (ENF-004, EF-006) : verrouillage biométrique,
 // journal d'accès, export des données.
 
-/// Bouton de menu : activer/désactiver le verrouillage Face ID.
-struct LockToggleButton: View {
-    @Environment(AppLock.self) private var lock
-
-    var body: some View {
-        Button {
-            lock.enabled.toggle()
-        } label: {
-            if lock.enabled {
-                Label("Désactiver le verrouillage \(lock.biometryLabel)", systemImage: "lock.open")
-            } else {
-                Label("Verrouiller avec \(lock.biometryLabel)", systemImage: "faceid")
-            }
-        }
-        .disabled(!lock.biometryAvailable)
-    }
+extension URL: @retroactive Identifiable {
+    public var id: String { absoluteString }
 }
 
 /// Journal d'accès (ENF-004) : « qui a consulté quoi ».

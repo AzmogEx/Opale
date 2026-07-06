@@ -821,6 +821,22 @@ final class APIClient: Sendable {
         return env.events ?? []
     }
 
+    /// Réinitialise TOUTES les données du profil (confirmation = nom exact).
+    func resetData(confirmName: String) async throws {
+        let _: EmptyResponse = try await request(
+            "DELETE", "/v1/me/data",
+            query: [URLQueryItem(name: "confirm", value: confirmName)]
+        )
+    }
+
+    /// Supprime définitivement le profil (confirmation = nom exact).
+    func deleteProfile(confirmName: String) async throws {
+        let _: EmptyResponse = try await request(
+            "DELETE", "/v1/me",
+            query: [URLQueryItem(name: "confirm", value: confirmName)]
+        )
+    }
+
     /// Télécharge l'export complet (EF-006) — ZIP en octets bruts.
     func exportData() async throws -> Data {
         guard let token = tokenProvider() else { throw APIError.notAuthenticated }

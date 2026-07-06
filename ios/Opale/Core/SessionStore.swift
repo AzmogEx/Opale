@@ -24,6 +24,12 @@ final class SessionStore {
     /// Mode discret (EF-004) : flouter tous les montants d'un geste.
     var discreetMode = false
 
+    /// Nom du profil connecté (« — » hors session).
+    var profileName: String {
+        if case .loggedIn(let profile) = state { return profile.name }
+        return "—"
+    }
+
     private nonisolated static let tokenKey = "session.token"
 
     init() {

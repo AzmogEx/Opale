@@ -16,9 +16,6 @@ struct AssistantView: View {
     @State private var status: AssistantStatus?
     @State private var showDecision = false
     @State private var showReview = false
-    @State private var showAccessLog = false
-    @State private var exportedFileURL: URL?
-    @State private var isExporting = false
     // EIA-022 : proposition d'escalade cloud en attente de consentement.
     @State private var pendingCloudQuestion: String?
 
@@ -52,6 +49,7 @@ struct AssistantView: View {
                         }
                         .scrollEdgeEffectStyle(.soft, for: .top)
                         .scrollDismissesKeyboard(.interactively)
+                        .animation(.spring(duration: 0.45, bounce: 0.22), value: messages.count)
                         .onChange(of: messages.count) {
                             if let last = messages.last {
                                 withAnimation(.spring(duration: 0.4)) {
@@ -67,6 +65,7 @@ struct AssistantView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
+                    // État de la cascade (EIA-021) — le reste vit dans Réglages.
                     Menu {
                         if let status {
                             Label(status.homelabAvailable ? "Homelab en ligne" : "Homelab hors ligne",
@@ -74,36 +73,13 @@ struct AssistantView: View {
                             Label(status.cloudConfigured ? "Cloud configuré (anonymisé)" : "Cloud non configuré",
                                   systemImage: "cloud")
                         }
-                        Divider()
-                        // ENF-004 : verrouillage biométrique (opt-in).
-                        LockToggleButton()
-                        Button {
-                            showAccessLog = true
-                        } label: {
-                            Label("Journal d'accès", systemImage: "list.bullet.rectangle")
-                        }
-                        Button {
-                            Task { await exportData() }
-                        } label: {
-                            Label(isExporting ? "Export en cours…" : "Exporter mes données",
-                                  systemImage: "square.and.arrow.up")
-                        }
-                        .disabled(isExporting)
-                        Divider()
-                        Button("Se déconnecter", role: .destructive) {
-                            Task { await session.logout() }
+                        if LocalAI.isAvailable {
+                            Label("IA locale iPhone active", systemImage: "iphone")
                         }
                     } label: {
-                        Image(systemName: "ellipsis.circle")
+                        Image(systemName: "point.3.connected.trianglepath.dotted")
                     }
                 }
-            }
-            .sheet(isPresented: $showAccessLog) {
-                AccessLogSheet()
-            }
-            .sheet(item: $exportedFileURL) { url in
-                ExportShareSheet(fileURL: url)
-                    .presentationDetents([.medium])
             }
             .task { await load() }
             .sheet(isPresented: $showDecision) {
@@ -136,7 +112,7 @@ struct AssistantView: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressable)
         .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 20))
     }
 
@@ -207,7 +183,7 @@ struct AssistantView: View {
                             .padding(.horizontal, 14)
                             .padding(.vertical, 9)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pressable)
                     .glassEffect(.regular.interactive(), in: .capsule)
                 }
             }
@@ -217,6 +193,13 @@ struct AssistantView: View {
             ForEach(messages) { message in
                 ChatBubble(message: message)
                     .id(message.id)
+                    // Chaque bulle surgit du bas avec un ressort.
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .bottom)
+                            .combined(with: .opacity)
+                            .combined(with: .scale(scale: 0.96, anchor: .bottom)),
+                        removal: .opacity
+                    ))
             }
             // EIA-021/022 : proposer l'escalade cloud, avec consentement.
             if let question = pendingCloudQuestion {
@@ -263,6 +246,7 @@ struct AssistantView: View {
                     .foregroundStyle(draft.isEmpty ? Color.secondary : OpaleTheme.accent)
             }
             .disabled(draft.isEmpty || isThinking)
+            .sensoryFeedback(.impact(weight: .medium), trigger: messages.count)
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
@@ -336,25 +320,6 @@ struct AssistantView: View {
         status = try? await s
     }
 
-    /// Export complet (EF-006) : télécharge le ZIP puis propose le partage.
-    private func exportData() async {
-        isExporting = true
-        defer { isExporting = false }
-        do {
-            let data = try await session.api.exportData()
-            let url = FileManager.default.temporaryDirectory
-                .appendingPathComponent("opale-export.zip")
-            try data.write(to: url)
-            exportedFileURL = url
-        } catch {
-            messages.append(ChatMessage(role: .assistant,
-                text: "Export impossible : \(error.localizedDescription)", tier: ""))
-        }
-    }
-}
-
-extension URL: @retroactive Identifiable {
-    public var id: String { absoluteString }
 }
 
 // MARK: - Messages

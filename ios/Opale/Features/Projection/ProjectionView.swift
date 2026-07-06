@@ -30,7 +30,9 @@ struct ProjectionView: View {
                         VStack(spacing: 16) {
                             if let result {
                                 independenceCard(result)
+                                    .cascadeIn(0)
                                 projectionChartCard(result)
+                                    .cascadeIn(1)
                             } else if let errorMessage {
                                 ContentUnavailableView(
                                     "Impossible de projeter",
@@ -42,7 +44,9 @@ struct ProjectionView: View {
                                     .frame(minHeight: 200)
                             }
                             assumptionsCard
+                                .cascadeIn(2)
                             GoalsSection()
+                                .cascadeIn(3)
                         }
                         .padding(.horizontal)
                         .padding(.bottom, 24)
@@ -91,6 +95,7 @@ struct ProjectionView: View {
                     Text(independence.months == 0 ? "Déjà libre 🎉" : "Libre en \(String(freedomYear))")
                         .font(.system(size: 40, weight: .bold, design: .rounded))
                         .foregroundStyle(OpaleTheme.iridescent)
+                        .iridescentShimmer()
                         .contentTransition(.numericText())
                         .animation(.spring(duration: 0.5), value: independence.months)
 

@@ -16,9 +16,10 @@ settings:
     SWIFT_APPROACHABLE_CONCURRENCY: YES
     CURRENT_PROJECT_VERSION: 1
     MARKETING_VERSION: 0.1.0
-    # Signature pour l'installation sur appareil réel.
+    # Signature pour l'installation sur appareil réel (équipe Cleanows —
+    # compte payant : profils longue durée, App Groups pour le widget).
     CODE_SIGN_STYLE: Automatic
-    DEVELOPMENT_TEAM: WLPGS653LG
+    DEVELOPMENT_TEAM: X3G9BWSS83
 
 targets:
   Opale:

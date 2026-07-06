@@ -33,6 +33,7 @@ struct HomeView: View {
 
     @State private var viewState: ViewState = .loading
     @State private var selectedDate: Date?
+    @State private var showSettings = false
 
     // Célébration de palier (EF-016) : dernier palier déjà fêté (euros).
     @AppStorage("home.celebratedMilestone") private var celebratedMilestone = 0
@@ -52,6 +53,8 @@ struct HomeView: View {
                         .transition(.opacity)
                 }
             }
+            // Palier franchi : la célébration se SENT aussi (EF-016).
+            .sensoryFeedback(.success, trigger: showConfetti) { _, new in new }
             .navigationTitle("Opale")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -61,9 +64,21 @@ struct HomeView: View {
                         withAnimation(.snappy) { session.discreetMode.toggle() }
                     } label: {
                         Image(systemName: session.discreetMode ? "eye.slash.fill" : "eye")
+                            .contentTransition(.symbolEffect(.replace))
                     }
                     .sensoryFeedback(.impact(weight: .light), trigger: session.discreetMode)
                 }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showSettings = true
+                    } label: {
+                        Image(systemName: "gearshape")
+                    }
+                    .accessibilityLabel("Réglages")
+                }
+            }
+            .sheet(isPresented: $showSettings) {
+                SettingsView()
             }
             .task { await load() }
             .refreshable { await load() }
@@ -94,13 +109,20 @@ struct HomeView: View {
         case .loaded(let snapshot):
             ScrollView {
                 GlassEffectContainer(spacing: 16) {
+                    // L'écran se construit en cascade — chaque carte entre
+                    // en scène avec son propre ressort (feel Revolut).
                     VStack(spacing: 16) {
                         alertsBanner(snapshot.alerts)
+                            .cascadeIn(0)
                         heroCard(snapshot)
+                            .cascadeIn(1)
                         chartCard(snapshot)
+                            .cascadeIn(2)
                         statsRow(snapshot)
+                            .cascadeIn(3)
                         if let health = snapshot.health {
                             healthCard(health)
+                                .cascadeIn(4)
                         }
                     }
                     .padding(.horizontal)
@@ -124,6 +146,7 @@ struct HomeView: View {
                 AmountText(cents: displayedNet(snapshot), style: .whole)
                     .font(.system(size: 44, weight: .bold, design: .rounded))
                     .foregroundStyle(OpaleTheme.iridescent)
+                    .iridescentShimmer() // le dégradé respire — vivant, pas agité
                     .minimumScaleFactor(0.6)
                     .lineLimit(1)
 
