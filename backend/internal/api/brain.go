@@ -18,6 +18,8 @@ import (
 	"github.com/opale-app/opale/internal/ai"
 	"github.com/opale-app/opale/internal/engine"
 	"github.com/opale-app/opale/internal/money"
+	"github.com/opale-app/opale/internal/nlq"
+	"github.com/opale-app/opale/internal/store"
 	"github.com/opale-app/opale/internal/twin"
 )
 
@@ -368,6 +370,13 @@ func (s *Server) handleAssistantAsk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Question de DONNÉES (EF-050) ? Le moteur fouille et répond avec les
+	// chiffres exacts — ni cascade, ni latence, ni approximation.
+	if answer, ok := s.answerDataQuestion(r, p.ID, req.Question); ok {
+		writeJSON(w, http.StatusOK, map[string]any{"answer": answer, "tier": "data"})
+		return
+	}
+
 	snap, err := s.buildTwin(r, p.ID)
 	if err != nil {
 		s.storeErr(w, err, "assistant: twin")
@@ -446,4 +455,113 @@ func compactText(c money.Cents) string {
 var frenchMonths = [12]string{
 	"janvier", "février", "mars", "avril", "mai", "juin",
 	"juillet", "août", "septembre", "octobre", "novembre", "décembre",
+}
+
+// ── Recherche en langage naturel (EF-050) ─────────────────────────────────────
+
+// answerDataQuestion tente de traiter la question comme une QUESTION DE
+// DONNÉES (« combien en courses en mars ? ») : parseur déterministe puis
+// fouille des transactions — la réponse contient les chiffres EXACTS.
+// Renvoie ("", false) si ce n'en est pas une : la cascade IA garde la main.
+func (s *Server) answerDataQuestion(r *http.Request, profileID, question string) (string, bool) {
+	ctx := r.Context()
+
+	categories, err := s.store.ListCategories(ctx, profileID)
+	if err != nil {
+		return "", false
+	}
+	names := make([]string, 0, len(categories))
+	for _, c := range categories {
+		names = append(names, c.Name)
+	}
+	merchants, _ := s.store.TopMerchants(ctx, profileID, time.Now().Year(), time.Now().Month(), 20)
+	labels := make([]string, 0, len(merchants))
+	for _, m := range merchants {
+		labels = append(labels, m.Label)
+	}
+
+	q := nlq.Parse(question, names, labels, time.Now())
+	if !q.Confident() {
+		return "", false
+	}
+
+	// Filtre de fouille.
+	filter := store.TransactionFilter{Limit: 500}
+	if !q.From.IsZero() {
+		from, to := q.From, q.To
+		filter.From, filter.To = &from, &to
+	}
+	if q.CategoryName != "" {
+		for _, c := range categories {
+			if c.Name == q.CategoryName {
+				filter.CategoryID = c.ID
+				break
+			}
+		}
+	}
+	if q.MerchantQuery != "" {
+		filter.Query = q.MerchantQuery
+	}
+
+	txs, err := s.store.ListTransactions(ctx, profileID, filter)
+	if err != nil {
+		return "", false
+	}
+
+	// Agrégat dans le bon sens (dépenses par défaut).
+	var total int64
+	count := 0
+	var biggest *store.Transaction
+	for i, t := range txs {
+		if q.Income != (t.Amount > 0) {
+			continue
+		}
+		amount := int64(t.Amount)
+		if amount < 0 {
+			amount = -amount
+		}
+		total += amount
+		count++
+		if biggest == nil || abs64(int64(t.Amount)) > abs64(int64(biggest.Amount)) {
+			biggest = &txs[i]
+		}
+	}
+
+	// La phrase de réponse — déterministe, chiffres du moteur.
+	var b strings.Builder
+	subject := "dépensé"
+	if q.Income {
+		subject = "reçu"
+	}
+	scope := ""
+	if q.CategoryName != "" {
+		scope = " en " + strings.ToLower(q.CategoryName)
+	}
+	if q.MerchantQuery != "" {
+		scope += " chez " + strings.TrimSpace(q.MerchantQuery)
+	}
+	period := q.PeriodLabel
+	if period == "" {
+		period = "sur la période"
+	}
+
+	if count == 0 {
+		fmt.Fprintf(&b, "Rien %s%s %s — aucun mouvement ne correspond.", subject, scope, period)
+		return b.String(), true
+	}
+	fmt.Fprintf(&b, "Tu as %s %s%s %s, en %d mouvement(s).",
+		subject, eurosText(money.Cents(total)), scope, period, count)
+	if biggest != nil && count > 1 {
+		fmt.Fprintf(&b, " Le plus gros : %s (%s le %s).",
+			biggest.Label, eurosText(biggest.Amount),
+			biggest.OccurredOn.Format("02/01"))
+	}
+	return b.String(), true
+}
+
+func abs64(v int64) int64 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }

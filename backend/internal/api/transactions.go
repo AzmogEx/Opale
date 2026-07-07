@@ -267,9 +267,16 @@ func (s *Server) handleImportCSV(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := csvimport.Parse(req.CSV)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_csv", err.Error())
+	// CSV ou OFX : détection automatique (EF-070).
+	var rows []csvimport.Row
+	var parseErr error
+	if csvimport.IsOFX(req.CSV) {
+		rows, parseErr = csvimport.ParseOFX(req.CSV)
+	} else {
+		rows, parseErr = csvimport.Parse(req.CSV)
+	}
+	if parseErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid_csv", parseErr.Error())
 		return
 	}
 

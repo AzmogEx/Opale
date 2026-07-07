@@ -270,7 +270,7 @@ type Document struct {
 // DocumentKinds : valeurs autorisées (alignées avec le CHECK SQL).
 var DocumentKinds = map[string]bool{
 	"deed": true, "contract": true, "invoice": true, "identity": true,
-	"insurance": true, "tax": true, "other": true,
+	"insurance": true, "tax": true, "photo": true, "other": true,
 }
 
 // CreateDocument stocke un document déjà chiffré (le chiffrement est fait
