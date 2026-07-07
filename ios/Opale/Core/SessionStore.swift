@@ -24,6 +24,12 @@ final class SessionStore {
     /// Mode discret (EF-004) : flouter tous les montants d'un geste.
     var discreetMode = false
 
+    /// Identifiant du profil connecté (clé du cache hors-ligne).
+    var profileID: String {
+        if case .loggedIn(let profile) = state { return profile.id }
+        return "anonyme"
+    }
+
     /// Nom du profil connecté (« — » hors session).
     var profileName: String {
         if case .loggedIn(let profile) = state { return profile.name }
@@ -78,6 +84,7 @@ final class SessionStore {
         try? await api.logout()
         Keychain.delete(Self.tokenKey)
         WidgetBridge.clear() // le widget ne doit pas survivre à la session
+        DiskCache.clear()    // le cache hors-ligne non plus
         state = .loggedOut
     }
 }

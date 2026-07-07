@@ -14,6 +14,9 @@ struct ProfileGateView: View {
     @State private var viewState: ViewState = .loading
     @State private var selectedProfile: Profile?
     @State private var showCreate = false
+    /// Onboarding : au tout premier lancement (aucun profil sur le serveur).
+    @State private var showOnboarding = false
+    @State private var onboardingSeen = false
 
     var body: some View {
         NavigationStack {
@@ -33,9 +36,32 @@ struct ProfileGateView: View {
                     }
                 case .loaded(let profiles):
                     profileList(profiles)
+                        .onAppear {
+                            if profiles.isEmpty && !onboardingSeen {
+                                showOnboarding = true
+                            }
+                        }
                 }
             }
             .navigationTitle("Opale")
+            .fullScreenCover(isPresented: $showOnboarding) {
+                OnboardingView {
+                    onboardingSeen = true
+                    showOnboarding = false
+                    showCreate = true
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        onboardingSeen = true // évite la re-présentation auto
+                        showOnboarding = true
+                    } label: {
+                        Image(systemName: "questionmark.circle")
+                    }
+                    .accessibilityLabel("Découvrir Opale")
+                }
+            }
             .task { await load() }
             .sheet(item: $selectedProfile) { profile in
                 PINLoginSheet(profile: profile)

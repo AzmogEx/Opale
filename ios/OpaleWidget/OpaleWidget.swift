@@ -1,6 +1,21 @@
 import WidgetKit
 import SwiftUI
 import Charts
+import AppIntents
+
+/// Intent INTERACTIF : flouter/défloutrer le montant directement depuis le
+/// widget — un œil sur l'écran d'accueil, sans ouvrir l'app.
+struct ToggleDiscreetIntent: AppIntent {
+	static let title: LocalizedStringResource = "Mode discret"
+	static let description = IntentDescription("Floute ou révèle le patrimoine sur le widget.")
+
+	func perform() async throws -> some IntentResult {
+		let defaults = UserDefaults(suiteName: "group.app.opale.shared")
+		let current = defaults?.bool(forKey: "discreet") ?? false
+		defaults?.set(!current, forKey: "discreet")
+		return .result()
+	}
+}
 
 // Widget « Patrimoine net » (P7) : l'essentiel d'Opale sur l'écran d'accueil.
 // Lit l'instantané publié par l'app dans l'App Group — aucun réseau, aucun
@@ -11,13 +26,16 @@ struct NetWorthEntry: TimelineEntry {
     let date: Date
     let netWorthCents: Int64?
     let historyCents: [Int64]
+    let discreet: Bool
 }
 
 struct NetWorthProvider: TimelineProvider {
     private static let suiteName = "group.app.opale.shared"
 
     func placeholder(in context: Context) -> NetWorthEntry {
-        NetWorthEntry(date: .now, netWorthCents: 4_830_000, historyCents: [4_500_000, 4_600_000, 4_700_000, 4_830_000])
+        NetWorthEntry(date: .now, netWorthCents: 4_830_000,
+                      historyCents: [4_500_000, 4_600_000, 4_700_000, 4_830_000],
+                      discreet: false)
     }
 
     func getSnapshot(in context: Context, completion: @escaping (NetWorthEntry) -> Void) {
@@ -33,14 +51,15 @@ struct NetWorthProvider: TimelineProvider {
     private func read() -> NetWorthEntry {
         guard let defaults = UserDefaults(suiteName: Self.suiteName),
               defaults.object(forKey: "netWorthCents") != nil else {
-            return NetWorthEntry(date: .now, netWorthCents: nil, historyCents: [])
+            return NetWorthEntry(date: .now, netWorthCents: nil, historyCents: [], discreet: false)
         }
         let history = (defaults.array(forKey: "historyCents") as? [NSNumber])?.map(\.int64Value) ?? []
         return NetWorthEntry(
             date: Date(timeIntervalSince1970: defaults.double(forKey: "updatedAt")),
             netWorthCents: defaults.object(forKey: "netWorthCents") as? Int64
                 ?? Int64(defaults.integer(forKey: "netWorthCents")),
-            historyCents: history
+            historyCents: history,
+            discreet: defaults.bool(forKey: "discreet")
         )
     }
 }
@@ -79,11 +98,22 @@ struct NetWorthWidgetView: View {
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(.secondary)
 
-            Text(Self.euros(cents))
-                .font(.system(size: family == .systemSmall ? 20 : 26,
-                              weight: .bold, design: .rounded))
-                .minimumScaleFactor(0.6)
-                .lineLimit(1)
+            HStack(alignment: .center) {
+                Text(Self.euros(cents))
+                    .font(.system(size: family == .systemSmall ? 20 : 26,
+                                  weight: .bold, design: .rounded))
+                    .minimumScaleFactor(0.6)
+                    .lineLimit(1)
+                    .blur(radius: entry.discreet ? 9 : 0)
+                Spacer(minLength: 4)
+                // INTERACTIF : flouter/révéler sans ouvrir l'app (AppIntent).
+                Button(intent: ToggleDiscreetIntent()) {
+                    Image(systemName: entry.discreet ? "eye.slash.fill" : "eye")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
 
             if let delta = monthDelta {
                 Text(Self.signedEuros(delta))

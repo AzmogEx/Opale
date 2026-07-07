@@ -14,8 +14,9 @@ struct HomeView: View {
         case loaded(Snapshot)
     }
 
-    /// Données de l'écran, chargées en parallèle.
-    struct Snapshot {
+    /// Données de l'écran, chargées en parallèle. Codable : c'est aussi
+    /// l'instantané du mode hors-ligne (DiskCache).
+    struct Snapshot: Codable {
         var netWorth: NetWorth
         var history: NetWorthHistory
         var cash: Cents
@@ -34,6 +35,8 @@ struct HomeView: View {
     @State private var viewState: ViewState = .loading
     @State private var selectedDate: Date?
     @State private var showSettings = false
+    /// Mode hors-ligne : date du cache affiché quand l'API est injoignable.
+    @State private var offlineSince: Date?
     /// Transition héros vers l'écran Analyses.
     @Namespace private var zoomSpace
 
@@ -64,6 +67,7 @@ struct HomeView: View {
                     // Mode discret (EF-004) : floute tous les montants.
                     Button {
                         withAnimation(.snappy) { session.discreetMode.toggle() }
+                        WidgetBridge.setDiscreet(session.discreetMode)
                     } label: {
                         Image(systemName: session.discreetMode ? "eye.slash.fill" : "eye")
                             .contentTransition(.symbolEffect(.replace))
@@ -112,6 +116,15 @@ struct HomeView: View {
                     // L'écran se construit en cascade — chaque carte entre
                     // en scène avec son propre ressort (feel Revolut).
                     VStack(spacing: 16) {
+                        if let offlineSince {
+                            Label("Hors ligne — données du \(offlineSince.formatted(.dateTime.day().month().hour().minute()))",
+                                  systemImage: "wifi.slash")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .glassEffect(.regular, in: .capsule)
+                        }
                         alertsBanner(snapshot.alerts)
                             .cascadeIn(0)
                         heroCard(snapshot)
@@ -442,7 +455,15 @@ struct HomeView: View {
 
     // MARK: - Chargement
 
+    private var cacheKey: String { "home-\(session.profileID)" }
+
     private func load() async {
+        // Ouverture instantanée : le dernier état connu s'affiche tout de
+        // suite, le réseau ne fait que rafraîchir.
+        if case .loading = viewState,
+           let cached = DiskCache.load(Snapshot.self, key: cacheKey) {
+            viewState = .loaded(cached.value)
+        }
         do {
             async let netWorth = session.api.netWorth()
             async let history = session.api.netWorthHistory(months: 12)
@@ -474,8 +495,17 @@ struct HomeView: View {
             )
 
             celebrateIfMilestoneReached(net: loadedNetWorth.net)
+            offlineSince = nil
+            if case .loaded(let snapshot) = viewState {
+                DiskCache.save(snapshot, key: cacheKey)
+            }
         } catch {
-            viewState = .error(error.localizedDescription)
+            // API injoignable : on RESTE sur le cache, avec un bandeau.
+            if case .loaded = viewState {
+                offlineSince = DiskCache.load(Snapshot.self, key: cacheKey)?.at ?? .now
+            } else {
+                viewState = .error(error.localizedDescription)
+            }
         }
     }
 

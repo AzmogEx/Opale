@@ -16,6 +16,16 @@ nonisolated enum WidgetBridge {
         WidgetCenter.shared.reloadAllTimelines()
     }
 
+    /// Synchronise le mode discret avec le widget (dans les deux sens).
+    static func setDiscreet(_ on: Bool) {
+        UserDefaults(suiteName: suiteName)?.set(on, forKey: "discreet")
+        WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    static func discreet() -> Bool {
+        UserDefaults(suiteName: suiteName)?.bool(forKey: "discreet") ?? false
+    }
+
     /// Efface l'instantané (déconnexion).
     static func clear() {
         guard let defaults = UserDefaults(suiteName: suiteName) else { return }

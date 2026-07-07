@@ -319,7 +319,7 @@ struct ImportCSVSheet: View {
             }
             .fileImporter(
                 isPresented: $showPicker,
-                allowedContentTypes: [.commaSeparatedText, .plainText, .text],
+                allowedContentTypes: [.commaSeparatedText, .plainText, .text, .data],
                 allowsMultipleSelection: false
             ) { pick in
                 Task { await handlePick(pick) }

@@ -1,4 +1,5 @@
 import SwiftUI
+import PhotosUI
 
 /// Valeur des objets (EF-035) : montres, véhicules, or, œuvres…
 /// avec l'écart entre prix d'achat et valeur estimée.
@@ -8,6 +9,11 @@ struct ObjectsView: View {
     @State private var objects: [ObjectStatus] = []
     @State private var editing: ObjectStatus?
     @State private var loaded = false
+    // Photos (EF-035) : documents « photo » du coffre, par actif.
+    @State private var photoDocs: [String: VaultDocument] = [:]
+    @State private var thumbnails: [String: UIImage] = [:]
+    @State private var pickingFor: ObjectStatus?
+    @State private var pickedItem: PhotosPickerItem?
 
     var body: some View {
         List {
@@ -25,6 +31,14 @@ struct ObjectsView: View {
                     row(object)
                 }
                 .buttonStyle(.plain)
+                .contextMenu {
+                    Button {
+                        pickingFor = object
+                    } label: {
+                        Label(photoDocs[object.asset.id] == nil ? "Ajouter une photo" : "Changer la photo",
+                              systemImage: "camera")
+                    }
+                }
             }
         }
         .opaleList()
@@ -32,6 +46,16 @@ struct ObjectsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
         .refreshable { await load() }
+        .photosPicker(isPresented: Binding(
+            get: { pickingFor != nil },
+            set: { if !$0 { pickingFor = nil } }
+        ), selection: $pickedItem, matching: .images)
+        .onChange(of: pickedItem) { _, item in
+            guard let item, let target = pickingFor else { return }
+            pickedItem = nil
+            pickingFor = nil
+            Task { await uploadPicked(item, for: target) }
+        }
         .sheet(item: $editing) { object in
             ObjectFormSheet(object: object) {
                 Task { await load() }
@@ -42,11 +66,22 @@ struct ObjectsView: View {
 
     @ViewBuilder
     private func row(_ o: ObjectStatus) -> some View {
-        HStack {
-            Image(systemName: o.asset.kind.systemImage)
-                .font(.title3)
-                .foregroundStyle(OpaleTheme.accent)
-                .frame(width: 32)
+        HStack(spacing: 12) {
+            if let thumb = thumbnails[o.asset.id] {
+                Image(uiImage: thumb)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 44, height: 44)
+                    .clipShape(.rect(cornerRadius: 10))
+            } else {
+                ZStack {
+                    Circle().fill(OpaleTheme.iridescent).opacity(0.18)
+                    Image(systemName: o.asset.kind.systemImage)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(OpaleTheme.iridescent)
+                }
+                .frame(width: 44, height: 44)
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(o.asset.name).font(.body.weight(.medium))
                 HStack(spacing: 4) {
@@ -76,6 +111,45 @@ struct ObjectsView: View {
     private func load() async {
         objects = (try? await session.api.objects()) ?? []
         loaded = true
+        await loadPhotos()
+    }
+
+    /// Repère la photo de chaque objet (document « photo » lié à l'actif)
+    /// et charge les vignettes manquantes — déchiffrées à la demande.
+    private func loadPhotos() async {
+        guard let docs = try? await session.api.documents().items else { return }
+        for doc in docs where doc.kind == "photo" {
+            guard let assetID = doc.assetID else { continue }
+            photoDocs[assetID] = doc
+            if thumbnails[assetID] == nil,
+               let data = try? await session.api.documentContent(id: doc.id),
+               let image = UIImage(data: data) {
+                thumbnails[assetID] = image
+            }
+        }
+    }
+
+    /// Dépose la photo choisie au coffre (chiffrée, N3), liée à l'objet.
+    private func uploadPicked(_ item: PhotosPickerItem, for object: ObjectStatus) async {
+        guard let data = try? await item.loadTransferable(type: Data.self),
+              let image = UIImage(data: data) else { return }
+        // Recadrée/compressée : une vignette n'a pas besoin de 12 Mpx.
+        let resized = image.preparingThumbnail(of: CGSize(width: 800, height: 800)) ?? image
+        guard let jpeg = resized.jpegData(compressionQuality: 0.8) else { return }
+
+        // Une seule photo par objet : l'ancienne est remplacée.
+        if let old = photoDocs[object.asset.id] {
+            try? await session.api.deleteDocument(id: old.id)
+        }
+        _ = try? await session.api.createDocument(.init(
+            name: "photo-\(object.asset.name).jpg",
+            kind: "photo",
+            mime: "image/jpeg",
+            assetID: object.asset.id,
+            contentBase64: jpeg.base64EncodedString()
+        ))
+        thumbnails[object.asset.id] = resized
+        await loadPhotos()
     }
 }
 

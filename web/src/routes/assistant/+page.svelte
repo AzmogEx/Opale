@@ -29,6 +29,7 @@
 	});
 
 	const tierLabel: Record<string, string> = {
+		data: 'Moteur — réponse exacte',
 		n1: 'iPhone — local',
 		n2: 'Homelab — privé',
 		n3: 'Cloud — anonymisé',

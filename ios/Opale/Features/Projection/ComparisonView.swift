@@ -18,6 +18,30 @@ struct ComparisonView: View {
     @State private var result: ScenarioComparison?
     @State private var isLoading = false
     @State private var errorMessage: String?
+    // Comparaisons enregistrées (EF-044+) — persistées sur l'appareil.
+    @State private var saved: [SavedComparison] = SavedComparison.all()
+    @State private var askName = false
+    @State private var newName = ""
+
+    struct SavedComparison: Codable, Identifiable {
+        var id = UUID()
+        var name: String
+        var a: ScenarioForm
+        var b: ScenarioForm
+
+        static let key = "comparisons.saved"
+        static func all() -> [SavedComparison] {
+            guard let data = UserDefaults.standard.data(forKey: key),
+                  let list = try? JSONDecoder().decode([SavedComparison].self, from: data)
+            else { return [] }
+            return list
+        }
+        static func persist(_ list: [SavedComparison]) {
+            if let data = try? JSONEncoder().encode(list) {
+                UserDefaults.standard.set(data, forKey: key)
+            }
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -59,6 +83,43 @@ struct ComparisonView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Fermer") { dismiss() }
                 }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button {
+                            newName = "\(a.label) vs \(b.label)"
+                            askName = true
+                        } label: {
+                            Label("Enregistrer cette comparaison", systemImage: "bookmark")
+                        }
+                        if !saved.isEmpty {
+                            Section("Enregistrées") {
+                                ForEach(saved) { comparison in
+                                    Button(comparison.name) {
+                                        a = comparison.a
+                                        b = comparison.b
+                                        Task { await compare() }
+                                    }
+                                }
+                            }
+                            Button(role: .destructive) {
+                                saved = []
+                                SavedComparison.persist([])
+                            } label: {
+                                Label("Tout effacer", systemImage: "trash")
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "bookmark")
+                    }
+                }
+            }
+            .alert("Nom de la comparaison", isPresented: $askName) {
+                TextField("Ex. Louer vs acheter", text: $newName)
+                Button("Enregistrer") {
+                    saved.append(SavedComparison(name: newName, a: a, b: b))
+                    SavedComparison.persist(saved)
+                }
+                Button("Annuler", role: .cancel) {}
             }
             .onAppear {
                 a.savings = baseSavings
@@ -224,8 +285,9 @@ struct ComparisonView: View {
     }
 }
 
-/// Les hypothèses saisies pour un scénario.
-private struct ScenarioForm {
+/// Les hypothèses saisies pour un scénario. Codable : les comparaisons
+/// peuvent être ENREGISTRÉES et rechargées (local, par appareil).
+struct ScenarioForm: Codable {
     var label: String
     var savings = 500
     var expenses = 2000

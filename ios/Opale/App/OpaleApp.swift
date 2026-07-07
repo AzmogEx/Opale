@@ -33,6 +33,8 @@ struct OpaleApp: App {
                         if case .loggedIn = session.state { lock.lockIfEnabled() }
                         NotificationManager.scheduleRefresh()
                     case .active:
+                        // Le widget a pu changer le mode discret (AppIntent).
+                        session.discreetMode = WidgetBridge.discreet()
                         Task { await lock.unlock() }
                     default:
                         break

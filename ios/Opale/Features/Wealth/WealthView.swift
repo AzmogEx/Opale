@@ -211,12 +211,27 @@ struct WealthView: View {
         }
     }
 
+    /// Instantané Codable du mode hors-ligne.
+    private struct WealthCacheSnapshot: Codable {
+        var assets: [Asset]
+        var liabilities: [Liability]
+    }
+
+    private var cacheKey: String { "wealth-\(session.profileID)" }
+
     private func load() async {
+        if case .loading = viewState,
+           let cached = DiskCache.load(WealthCacheSnapshot.self, key: cacheKey) {
+            viewState = .loaded(cached.value.assets, cached.value.liabilities)
+        }
         do {
             async let assets = session.api.listAssets()
             async let liabilities = session.api.listLiabilities()
-            viewState = .loaded(try await assets, try await liabilities)
+            let (a, l) = (try await assets, try await liabilities)
+            viewState = .loaded(a, l)
+            DiskCache.save(WealthCacheSnapshot(assets: a, liabilities: l), key: cacheKey)
         } catch {
+            if case .loaded = viewState { return } // on reste sur le cache
             viewState = .error(error.localizedDescription)
         }
     }

@@ -362,6 +362,7 @@ private struct ChatBubble: View {
 
     private var tierLabel: String {
         switch message.tier {
+        case "data": "Moteur — réponse exacte"
         case "n1": "iPhone — 100 % local"
         case "n2": "Homelab — privé"
         case "n3": "Cloud — anonymisé"
@@ -371,6 +372,7 @@ private struct ChatBubble: View {
 
     private var tierIcon: String {
         switch message.tier {
+        case "data": "magnifyingglass"
         case "n1": "iphone"
         case "n2": "server.rack"
         case "n3": "cloud"
