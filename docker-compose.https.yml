@@ -1,0 +1,21 @@
+# Optionnel : docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build --wait
+services:
+  https:
+    image: caddy:2-alpine
+    environment:
+      OPALE_DOMAIN: ${OPALE_DOMAIN:?Définir un domaine DNS pour HTTPS}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - opale_tls_data:/data
+      - opale_tls_config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+    restart: unless-stopped
+volumes:
+  opale_tls_data:
+  opale_tls_config:

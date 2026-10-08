@@ -7,9 +7,13 @@ struct TransmissionView: View {
 
     @State private var summary: TransmissionSummary?
     @State private var showAddContact = false
+    @State private var editingContact: Contact?
+    @State private var errorMessage: String?
 
     var body: some View {
         List {
+            Section { NavigationLink("Bénéficiaires & accès d’urgence") { TransmissionAccessView() } }
+            if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
             if let summary {
                 Section {
                     VStack(alignment: .leading, spacing: 6) {
@@ -43,14 +47,11 @@ struct TransmissionView: View {
                             .foregroundStyle(.secondary)
                     }
                     ForEach(summary.contacts) { contact in
-                        contactRow(contact)
+                        contactRow(contact).onTapGesture { editingContact = contact }
                     }
                     .onDelete { indexSet in
                         Task {
-                            for i in indexSet {
-                                try? await session.api.deleteContact(id: summary.contacts[i].id)
-                            }
-                            await load()
+                            do { for i in indexSet { try await session.api.deleteContact(id: summary.contacts[i].id) }; await load() } catch { errorMessage = error.localizedDescription }
                         }
                     }
                 } header: {
@@ -79,8 +80,8 @@ struct TransmissionView: View {
                                     .labelStyle(.titleAndIcon)
                             }
                             Spacer()
-                            if let value = asset.latestValue {
-                                AmountText(cents: value, style: .whole)
+                            if let value = asset.currentValue ?? asset.latestValue {
+                                AmountText(cents: value, style: .whole, currency: asset.currency ?? "EUR")
                                     .font(.subheadline.weight(.medium))
                             }
                         }
@@ -93,7 +94,7 @@ struct TransmissionView: View {
                             Text(liability.name).font(.subheadline)
                             Spacer()
                             if let value = liability.latestValue {
-                                AmountText(cents: Cents(-value.raw), style: .whole)
+                                AmountText(cents: Cents(-value.raw), style: .whole, currency: liability.currency)
                                     .font(.subheadline.weight(.medium))
                                     .foregroundStyle(OpaleTheme.loss)
                             }
@@ -109,6 +110,7 @@ struct TransmissionView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
         .refreshable { await load() }
+        .sheet(item: $editingContact) { contact in ContactFormSheet(existing: contact) { Task { await load() } } }
         .sheet(isPresented: $showAddContact) {
             ContactFormSheet { Task { await load() } }
                 .presentationDetents([.medium])
@@ -147,12 +149,13 @@ struct TransmissionView: View {
     }
 
     private func load() async {
-        summary = try? await session.api.transmission()
+        do { summary = try await session.api.transmission(); errorMessage = nil } catch { errorMessage = error.localizedDescription }
     }
 }
 
 /// Ajout d'un contact clé.
 private struct ContactFormSheet: View {
+    var existing: Contact?
     var onSaved: () -> Void
 
     @Environment(SessionStore.self) private var session
@@ -191,7 +194,8 @@ private struct ContactFormSheet: View {
                     Text(errorMessage).foregroundStyle(OpaleTheme.loss)
                 }
             }
-            .navigationTitle("Nouveau contact")
+            .onAppear { if let existing { name = existing.name; role = ContactRole(rawValue: existing.role) ?? .other; phone = existing.phone; email = existing.email; note = existing.note } }
+            .navigationTitle(existing == nil ? "Nouveau contact" : "Modifier le contact")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -207,13 +211,15 @@ private struct ContactFormSheet: View {
 
     private func save() async {
         do {
-            _ = try await session.api.createContact(.init(
+            let request = APIClient.ContactRequest(
                 name: name.trimmingCharacters(in: .whitespaces),
                 role: role.rawValue,
                 phone: phone,
                 email: email,
                 note: note
-            ))
+            )
+            if let existing { try await session.api.updateContact(id: existing.id, request: request) }
+            else { _ = try await session.api.createContact(request) }
             onSaved()
             dismiss()
         } catch {

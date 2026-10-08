@@ -22,8 +22,8 @@ export default defineConfig({
 	server: {
 		// Dev : l'API locale tourne sur :8080 (pas de CORS nécessaire).
 		proxy: {
-			'/v1': 'http://localhost:8080',
-			'/healthz': 'http://localhost:8080'
+			'/v1': process.env.OPALE_API_URL ?? 'http://localhost:8080',
+			'/healthz': process.env.OPALE_API_URL ?? 'http://localhost:8080'
 		}
 	}
 });

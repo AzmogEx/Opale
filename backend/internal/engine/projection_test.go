@@ -136,3 +136,22 @@ func TestProjectMonotoneWithPositiveInputs(t *testing.T) {
 		}
 	}
 }
+
+func TestProjectionExtremesAndRatePrecision(t *testing.T) {
+	if _, e := Project(-9223372036854775807, -100, 0, 1); e == nil {
+		t.Fatal("negative overflow")
+	}
+	if _, e := IndependenceTarget(9223372036854775807, 400); e == nil {
+		t.Fatal("target overflow")
+	}
+	p, e := Project(12000000, 0, 500, 1)
+	if e != nil || p[1].Net != 12050000 {
+		t.Fatal(p, e)
+	}
+	// Stop once the target is reached; a hypothetical overflow decades later
+	// must not erase an already valid independence date.
+	ind, e := ComputeIndependence(1000000, 100000, 1000, 10000, 400)
+	if e != nil || !ind.Reached {
+		t.Fatal(ind, e)
+	}
+}

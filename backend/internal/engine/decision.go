@@ -80,13 +80,22 @@ func netAt(points []ProjectionPoint, month int) money.Cents {
 
 // EvaluateDecision calcule l'impact déterministe d'une décision.
 func EvaluateDecision(in DecisionInputs) (DecisionImpact, error) {
-	if in.SwrBps <= 0 || in.SwrBps > bpsScale {
+	if in.SwrBps <= 0 || in.SwrBps > bpsScale || in.AnnualReturnBps < 0 || in.AnnualReturnBps > 1200 {
 		return DecisionImpact{}, ErrInvalidInput
 	}
 
-	startAfter := in.NetWorth - in.OneTimeCost
-	savingsAfter := in.MonthlySavings - in.MonthlyCost
-	expensesAfter := in.MonthlyExpenses + in.MonthlyCost
+	startAfter, err := money.Sub(in.NetWorth, in.OneTimeCost)
+	if err != nil {
+		return DecisionImpact{}, err
+	}
+	savingsAfter, err := money.Sub(in.MonthlySavings, in.MonthlyCost)
+	if err != nil {
+		return DecisionImpact{}, err
+	}
+	expensesAfter, err := money.Add(in.MonthlyExpenses, in.MonthlyCost)
+	if err != nil {
+		return DecisionImpact{}, err
+	}
 
 	impact := DecisionImpact{
 		NetWorthAfter:  startAfter,
@@ -119,8 +128,14 @@ func EvaluateDecision(in DecisionInputs) (DecisionImpact, error) {
 			ReturnBps: sc.bps,
 			In5y:      netAt(decided, 60),
 			In10y:     netAt(decided, 120),
-			Delta5y:   netAt(decided, 60) - netAt(baseline, 60),
-			Delta10y:  netAt(decided, 120) - netAt(baseline, 120),
+		}
+		s.Delta5y, err = money.Sub(netAt(decided, 60), netAt(baseline, 60))
+		if err != nil {
+			return DecisionImpact{}, err
+		}
+		s.Delta10y, err = money.Sub(netAt(decided, 120), netAt(baseline, 120))
+		if err != nil {
+			return DecisionImpact{}, err
 		}
 
 		// Retard d'indépendance : seulement si les dépenses restent > 0.
@@ -157,12 +172,12 @@ func decisionVerdict(in DecisionInputs, impact DecisionImpact) (level, reco stri
 		return "élevé", "Cette décision rend ton épargne mensuelle négative : chaque mois, tu t'appauvris. À éviter en l'état, ou compense en réduisant d'autres charges."
 	case in.OneTimeCost > 0 && !impact.AffordableCash:
 		return "élevé", "Le coût immédiat dépasse ton cash disponible : impossible sans emprunter ou vendre des actifs. Reporte ou finance autrement."
-	case in.MonthlyCost > 0 && in.MonthlySavings > 0 && int64(in.MonthlyCost)*2 > int64(in.MonthlySavings):
+	case in.MonthlyCost > 0 && in.MonthlySavings > 0 && in.MonthlyCost > in.MonthlySavings/2:
 		if normal.DelayMonths > 0 {
 			return "modéré", "Faisable, mais la charge mensuelle absorbe plus de la moitié de ton épargne et retarde ton indépendance. À faire seulement si ça compte vraiment pour toi."
 		}
 		return "modéré", "Faisable, mais la charge mensuelle absorbe plus de la moitié de ton épargne actuelle. Garde un œil sur ton taux d'épargne."
-	case in.OneTimeCost > 0 && in.Cash > 0 && int64(in.OneTimeCost)*2 > int64(in.Cash):
+	case in.OneTimeCost > 0 && in.Cash > 0 && in.OneTimeCost > in.Cash/2:
 		return "modéré", "Le coût entame plus de la moitié de ton cash : ton fonds d'urgence en prend un coup. Reconstitue-le en priorité après l'achat."
 	case impact.Scenarios[1].Delta10y >= 0:
 		return "faible", "Cette décision améliore ta trajectoire : elle te rapporte plus qu'elle ne coûte à 10 ans. Fonce."

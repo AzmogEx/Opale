@@ -9,11 +9,14 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"mime"
 	"net/http"
+	"path"
 	"sort"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/opale-app/opale/internal/engine"
 	"github.com/opale-app/opale/internal/money"
 	"github.com/opale-app/opale/internal/store"
 	"github.com/opale-app/opale/internal/vault"
@@ -48,21 +51,37 @@ func (s *Server) handleRealEstate(w http.ResponseWriter, r *http.Request) {
 		d := prop.Details
 
 		if d.PurchasePrice > 0 && d.MonthlyRent > 0 {
-			st.GrossYieldBps = int(int64(d.MonthlyRent) * 12 * 10_000 / int64(d.PurchasePrice))
+			yield, e := scaleCents(d.MonthlyRent, 120000, int64(d.PurchasePrice))
+			if e != nil {
+				s.storeErr(w, e, "property yield")
+				return
+			}
+			st.GrossYieldBps = int(yield)
 		}
-		st.MonthlyCashflow = d.MonthlyRent - d.MonthlyCharges - d.MonthlyLoanPayment -
-			money.Cents(int64(d.PropertyTaxYearly)/12)
+		st.MonthlyCashflow, err = money.Sum(d.MonthlyRent, -d.MonthlyCharges, -d.MonthlyLoanPayment, -money.Cents(int64(d.PropertyTaxYearly)/12))
+		if err != nil {
+			s.storeErr(w, err, "property cashflow")
+			return
+		}
 
 		latest := money.Cents(0)
 		if prop.Asset.LatestValue != nil {
 			latest = *prop.Asset.LatestValue
 		}
 		if d.PurchasePrice > 0 && latest > 0 {
-			st.CapitalGain = latest - d.PurchasePrice
+			st.CapitalGain, err = money.Sub(latest, d.PurchasePrice)
+			if err != nil {
+				s.storeErr(w, err, "property gain")
+				return
+			}
 		}
 		st.Equity = latest
 		if prop.LoanRemaining != nil {
-			st.Equity = latest - *prop.LoanRemaining
+			st.Equity, err = money.Sub(latest, *prop.LoanRemaining)
+			if err != nil {
+				s.storeErr(w, err, "property equity")
+				return
+			}
 		}
 		out = append(out, st)
 	}
@@ -129,7 +148,8 @@ var investmentKinds = map[string]bool{
 
 // investmentStatus — un placement + sa performance depuis la première valo.
 type investmentStatus struct {
-	Asset store.Asset `json:"asset"`
+	Asset       store.Asset                  `json:"asset"`
+	Performance engine.InvestmentPerformance `json:"performance"`
 	// Première valorisation connue (référence de performance).
 	FirstValue money.Cents `json:"first_value_cents"`
 	FirstDate  *time.Time  `json:"first_date,omitempty"`
@@ -137,7 +157,8 @@ type investmentStatus struct {
 	Change    money.Cents `json:"change_cents"`
 	ChangeBps int         `json:"change_bps"`
 	// Part du portefeuille de placements (bps).
-	AllocationBps int `json:"allocation_bps"`
+	AllocationBps int         `json:"allocation_bps"`
+	ValueEUR      money.Cents `json:"value_eur_cents"`
 }
 
 func (s *Server) handleInvestments(w http.ResponseWriter, r *http.Request) {
@@ -147,43 +168,48 @@ func (s *Server) handleInvestments(w http.ResponseWriter, r *http.Request) {
 		s.storeErr(w, err, "investments: assets")
 		return
 	}
-	firsts, err := s.store.FirstValuations(r.Context(), p.ID)
-	if err != nil {
-		s.storeErr(w, err, "investments: firsts")
-		return
-	}
-	firstByAsset := make(map[string]store.FirstValuation, len(firsts))
-	for _, f := range firsts {
-		firstByAsset[f.AssetID] = f
-	}
-
-	var out []investmentStatus
-	var total int64
+	out := []investmentStatus{}
+	var total money.Cents
+	values := map[string]money.Cents{}
 	for _, a := range assets {
 		if !investmentKinds[a.Kind] || a.Archived {
 			continue
 		}
-		st := investmentStatus{Asset: a}
-		if f, ok := firstByAsset[a.ID]; ok {
-			st.FirstValue = f.Value
-			asOf := f.AsOf
-			st.FirstDate = &asOf
+		d, err := s.store.InvestmentDetail(r.Context(), p.ID, a.ID)
+		if err != nil {
+			s.storeErr(w, err, "investment performance")
+			return
 		}
-		if a.LatestValue != nil {
-			total += int64(*a.LatestValue)
-			if st.FirstValue > 0 {
-				st.Change = *a.LatestValue - st.FirstValue
-				st.ChangeBps = int(int64(st.Change) * 10_000 / int64(st.FirstValue))
-			}
+		st := investmentStatus{Asset: d.Asset, Performance: d.Performance, FirstValue: d.Performance.InitialCapital, Change: d.Performance.Gain}
+		if d.FirstDate != nil {
+			date, _ := time.Parse(dayLayout, *d.FirstDate)
+			st.FirstDate = &date
+		}
+		if d.Performance.ReturnBps != nil {
+			st.ChangeBps = int(*d.Performance.ReturnBps)
+		}
+		value, err := s.store.AssetLatestValue(r.Context(), p.ID, a.ID)
+		if err != nil {
+			s.storeErr(w, err, "investment conversion")
+			return
+		}
+		values[a.ID] = value
+		st.ValueEUR = value
+		total, err = money.Add(total, value)
+		if err != nil {
+			s.storeErr(w, err, "investment total")
+			return
 		}
 		out = append(out, st)
 	}
-	// Allocation en bps du total des placements.
 	if total > 0 {
 		for i := range out {
-			if out[i].Asset.LatestValue != nil {
-				out[i].AllocationBps = int(int64(*out[i].Asset.LatestValue) * 10_000 / total)
+			rate, e := scaleCents(values[out[i].Asset.ID], 10000, int64(total))
+			if e != nil {
+				s.storeErr(w, e, "investment allocation")
+				return
 			}
+			out[i].AllocationBps = int(rate)
 		}
 	}
 
@@ -209,13 +235,26 @@ func (s *Server) handleObjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := make([]objectStatus, 0, len(objects))
-	var total int64
+	var total money.Cents
 	for _, o := range objects {
 		st := objectStatus{ValuableObject: o}
 		if o.Asset.LatestValue != nil {
-			total += int64(*o.Asset.LatestValue)
+			value, e := s.store.AssetLatestValue(r.Context(), p.ID, o.Asset.ID)
+			if e != nil {
+				s.storeErr(w, e, "object conversion")
+				return
+			}
+			total, err = money.Add(total, value)
+			if err != nil {
+				s.storeErr(w, err, "object total")
+				return
+			}
 			if o.Details.PurchasePrice > 0 {
-				st.Change = *o.Asset.LatestValue - o.Details.PurchasePrice
+				st.Change, err = money.Sub(*o.Asset.LatestValue, o.Details.PurchasePrice)
+				if err != nil {
+					s.storeErr(w, err, "object gain")
+					return
+				}
 			}
 		}
 		out = append(out, st)
@@ -284,8 +323,8 @@ var milestoneEuros = []int64{10_000, 25_000, 50_000, 100_000, 250_000, 500_000, 
 
 func (s *Server) handleTimeline(w http.ResponseWriter, r *http.Request) {
 	p := profileFromContext(r.Context())
-	today := time.Now()
-	var events []timelineEvent
+	today := parisToday()
+	events := []timelineEvent{}
 
 	// 1. Acquisitions : première valorisation de chaque actif.
 	firsts, err := s.store.FirstValuations(r.Context(), p.ID)
@@ -471,9 +510,11 @@ func (s *Server) handleDocumentContent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "vault_corrupted", err.Error())
 		return
 	}
-	s.journal(r, &p.ID, "document_downloaded", doc.Name)
+	s.journal(r, &p.ID, "document_downloaded", doc.ID)
 	w.Header().Set("Content-Type", doc.Mime)
-	w.Header().Set("Content-Disposition", `attachment; filename="`+doc.Name+`"`)
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": path.Base(doc.Name)}))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(plain)
 }

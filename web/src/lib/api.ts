@@ -4,9 +4,12 @@
 export interface Profile {
 	id: string;
 	name: string;
+	privacy_default?: string;
 }
 
 export interface NetWorth {
+	complete?: boolean;
+	missing_valuations?: number;
 	assets_total_cents: number;
 	liabilities_total_cents: number;
 	net_cents: number;
@@ -97,7 +100,17 @@ export interface Projection {
 
 export interface AskResponse {
 	answer: string;
-	tier: string; // "n2" | "n3" | "" (repli moteur)
+	tier: string;
+	state?: string;
+	cloud_eligible?: boolean;
+	facts?: {
+		id: string;
+		value_cents?: number;
+		unit?: string;
+		period?: string;
+		source?: string;
+		text?: string;
+	}[];
 }
 
 export interface AssistantStatus {
@@ -133,23 +146,55 @@ export const kindLabels: Record<string, string> = {
 	consumer_loan: 'Crédit conso'
 };
 
+// Refuse une précision que Number ne peut représenter ; ne jamais afficher un montant arrondi silencieusement.
+function validateMoney(value: unknown): void {
+	if (Array.isArray(value)) {
+		value.forEach(validateMoney);
+		return;
+	}
+	if (value && typeof value === 'object')
+		for (const [key, item] of Object.entries(value)) {
+			if (
+				(key.endsWith('_cents') || key.endsWith('_micro')) &&
+				item !== null &&
+				item !== undefined &&
+				!Number.isSafeInteger(item)
+			)
+				throw new APIError(
+					422,
+					'Ce montant dépasse la précision prise en charge par le web. Aucun résultat arrondi n’est affiché.'
+				);
+			validateMoney(item);
+		}
+}
+
 /** Client HTTP minimal : base configurable, jeton porteur, erreurs typées. */
 export class API {
 	constructor(
 		private base: string,
-		private token: () => string | null
+		private token: () => string | null,
+		private expired: () => void = () => {}
 	) {}
 
-	private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+	async request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+		validateMoney(body);
 		const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 		const token = this.token();
 		if (token) headers.Authorization = `Bearer ${token}`;
 
+		const requestToken = token;
 		const res = await fetch(this.base + path, {
 			method,
+			cache: 'no-store',
 			headers,
-			body: body === undefined ? undefined : JSON.stringify(body)
+			body: body === undefined ? undefined : JSON.stringify(body),
+			signal: signal
+				? AbortSignal.any([signal, AbortSignal.timeout(60000)])
+				: AbortSignal.timeout(60000)
 		});
+		if (requestToken !== this.token())
+			throw new APIError(409, 'Le profil a changé. Recharge cette vue.');
+		if (res.status === 401 && token && !path.startsWith('/v1/auth/')) this.expired();
 		if (!res.ok) {
 			let message = `HTTP ${res.status}`;
 			try {
@@ -161,17 +206,47 @@ export class API {
 			throw new APIError(res.status, message);
 		}
 		if (res.status === 204) return undefined as T;
-		return (await res.json()) as T;
+		const data = await res.json();
+		if (requestToken !== this.token())
+			throw new APIError(409, 'Le profil a changé. Recharge cette vue.');
+		validateMoney(data);
+		return data as T;
 	}
 
 	// ── Auth ──────────────────────────────────────────────────────────────
 	listProfiles = () =>
 		this.request<{ profiles: Profile[] }>('GET', '/v1/profiles').then((r) => r.profiles ?? []);
 	login = (profile_id: string, pin: string) =>
-		this.request<{ token: string; profile: Profile }>('POST', '/v1/auth/login', {
-			profile_id,
-			pin
+		this.request<{ token: string; expires_at: string; profile: Profile }>(
+			'POST',
+			'/v1/auth/login',
+			{
+				profile_id,
+				pin
+			}
+		);
+	me = () => this.request<Profile>('GET', '/v1/me');
+	createProfile = (name: string, pin: string) =>
+		this.request<Profile>('POST', '/v1/profiles', { name, pin, privacy_default: 'N1' });
+	async download(path: string, filename: string) {
+		const token = this.token();
+		const res = await fetch(this.base + path, {
+			cache: 'no-store',
+			headers: token ? { Authorization: `Bearer ${token}` } : {},
+			signal: AbortSignal.timeout(120000)
 		});
+		if (token !== this.token()) throw new APIError(409, 'Le profil a changé.');
+		if (res.status === 401) this.expired();
+		if (!res.ok) throw new APIError(res.status, 'Téléchargement impossible.');
+		const blob = await res.blob();
+		if (token !== this.token()) throw new APIError(409, 'Le profil a changé.');
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = filename;
+		a.click();
+		setTimeout(() => URL.revokeObjectURL(url), 1000);
+	}
 	logout = () => this.request<void>('POST', '/v1/auth/logout');
 
 	// ── Patrimoine ────────────────────────────────────────────────────────
@@ -186,10 +261,10 @@ export class API {
 		);
 
 	// ── Flux ──────────────────────────────────────────────────────────────
-	listTransactions = (from: string, to: string) =>
+	listTransactions = (from: string, to: string, filters: Record<string, string | number> = {}) =>
 		this.request<{ transactions: Transaction[] }>(
 			'GET',
-			`/v1/transactions/?from=${from}&to=${to}`
+			`/v1/transactions/?${new URLSearchParams({ from, to, ...Object.fromEntries(Object.entries(filters).map(([k, v]) => [k, String(v)])) })}`
 		).then((r) => r.transactions ?? []);
 	monthSummary = (year: number, month: number) =>
 		this.request<MonthSummary>('GET', `/v1/transactions/summary?year=${year}&month=${month}`);
@@ -210,7 +285,17 @@ export class API {
 			`/v1/projection?monthly_savings_cents=${p.savings}&annual_return_bps=${p.returnBps}` +
 				`&monthly_expenses_cents=${p.expenses}&inflation_bps=${p.inflationBps}`
 		);
-	ask = (question: string, allow_cloud = false) =>
-		this.request<AskResponse>('POST', '/v1/assistant/ask', { question, allow_cloud });
+	ask = (
+		question: string,
+		allow_cloud = false,
+		history: { role: string; text: string }[] = [],
+		signal?: AbortSignal
+	) =>
+		this.request<AskResponse>(
+			'POST',
+			'/v1/assistant/ask',
+			{ question, allow_cloud, history },
+			signal
+		);
 	assistantStatus = () => this.request<AssistantStatus>('GET', '/v1/assistant/status');
 }

@@ -12,6 +12,8 @@ struct VaultView: View {
     @State private var showImporter = false
     @State private var pendingImport: PendingImport?
     @State private var viewing: VaultDocument?
+    @State private var editing: VaultDocument?
+    @State private var deleting: VaultDocument?
     @State private var errorMessage: String?
 
     var body: some View {
@@ -19,7 +21,7 @@ struct VaultView: View {
             if !vaultConfigured {
                 Section {
                     Label {
-                        Text("Coffre désactivé : définis OPALE_VAULT_KEY sur le serveur pour activer le chiffrement.")
+                        Text("Le coffre chiffré n’est pas disponible sur ce serveur.")
                             .font(.subheadline)
                     } icon: {
                         Image(systemName: "lock.slash")
@@ -43,15 +45,9 @@ struct VaultView: View {
                             row(doc)
                         }
                         .buttonStyle(.plain)
+                        .contextMenu { Button("Modifier les informations") { editing = doc } }
                     }
-                    .onDelete { indexSet in
-                        Task {
-                            for i in indexSet {
-                                try? await session.api.deleteDocument(id: documents[i].id)
-                            }
-                            await load()
-                        }
-                    }
+                    .onDelete { indexSet in if let index = indexSet.first { deleting = documents[index] } }
                 } footer: {
                     Label("Chiffré AES-256 sur ton homelab — jamais envoyé au cloud (N3).",
                           systemImage: "lock.shield")
@@ -76,6 +72,9 @@ struct VaultView: View {
                 .disabled(!vaultConfigured)
             }
         }
+        .confirmationDialog("Supprimer ce document ?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
+            Button("Supprimer définitivement", role: .destructive) { if let doc = deleting { Task { do { try await session.api.deleteDocument(id: doc.id); await load() } catch { errorMessage = error.localizedDescription }; deleting = nil } } }
+        }
         .task { await load() }
         .refreshable { await load() }
         .fileImporter(isPresented: $showImporter,
@@ -89,6 +88,7 @@ struct VaultView: View {
             }
             .presentationDetents([.medium])
         }
+        .sheet(item: $editing) { doc in DocumentEditSheet(document: doc) { Task { await load() } } }
         .sheet(item: $viewing) { doc in
             DocumentDetailSheet(document: doc)
                 .presentationDetents([.medium])
@@ -130,7 +130,7 @@ struct VaultView: View {
         do {
             let data = try Data(contentsOf: url)
             guard data.count <= 10 << 20 else {
-                errorMessage = "Fichier trop volumineux (10 Mo max)"
+                errorMessage = "Fichier trop volumineux (10 Mio max)"
                 return
             }
             pendingImport = PendingImport(
@@ -146,10 +146,12 @@ struct VaultView: View {
     }
 
     private func load() async {
-        if let result = try? await session.api.documents() {
+        do {
+            let result = try await session.api.documents()
             documents = result.items
             vaultConfigured = result.vaultConfigured
-        }
+            errorMessage = nil
+        } catch { errorMessage = error.localizedDescription }
         loaded = true
     }
 }
@@ -283,7 +285,7 @@ private struct DocumentDetailSheet: View {
                 Section {
                     LabeledContent("Type", value: DocumentKind(rawValue: document.kind)?.label ?? document.kind)
                     LabeledContent("Taille", value: ByteCountFormatStyle().format(document.sizeBytes))
-                    LabeledContent("Déposé le", value: document.createdAt.formatted(.dateTime.day().month().year()))
+                    LabeledContent("Déposé le", value: document.createdAt.opaleFormatted(.dateTime.day().month().year()))
                     if let assetName = document.assetName, !assetName.isEmpty {
                         LabeledContent("Actif lié", value: assetName)
                     }
@@ -316,18 +318,50 @@ private struct DocumentDetailSheet: View {
                 }
             }
             .task { await download() }
+            .onDisappear { if let fileURL { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }; fileURL = nil }
         }
     }
 
     private func download() async {
         do {
             let data = try await session.api.documentContent(id: document.id)
-            let url = FileManager.default.temporaryDirectory
-                .appendingPathComponent(document.name)
-            try data.write(to: url)
+            guard !Task.isCancelled else { return }
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("opale-document-" + UUID().uuidString, isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let filename = URL(fileURLWithPath: document.name).lastPathComponent
+            let url = directory.appendingPathComponent(filename.isEmpty ? "document" : filename)
+            try data.write(to: url, options: [.atomic, .completeFileProtection])
             fileURL = url
         } catch {
             errorMessage = error.localizedDescription
         }
     }
+}
+
+
+private struct DocumentEditSheet: View {
+    let document: VaultDocument
+    var saved: () -> Void
+    @Environment(SessionStore.self) private var session
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var kind = "other"
+    @State private var assetID = ""
+    @State private var assets: [Asset] = []
+    @State private var error: String?
+    @State private var busy = false
+    var body: some View {
+        NavigationStack { Form {
+            Section("Document") {
+                TextField("Nom", text: $name)
+                Picker("Type", selection: $kind) { ForEach(DocumentKind.allCases) { Text($0.label).tag($0.rawValue) } }
+                Picker("Actif lié", selection: $assetID) { Text("Aucun").tag(""); ForEach(assets) { Text($0.name).tag($0.id) } }
+            }
+            ToolError(message: error)
+        }.navigationTitle("Modifier le document").toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("Annuler") { dismiss() } }
+            ToolbarItem(placement: .confirmationAction) { Button("Enregistrer") { Task { await save() } }.disabled(busy || name.isEmpty) }
+        }.task { name = document.name; kind = document.kind; assetID = document.assetID ?? ""; do { assets = try await session.api.listAssets() } catch { self.error = error.localizedDescription } } }
+    }
+    private func save() async { busy = true; defer { busy = false }; do { try await session.api.updateDocument(id: document.id, name: name, kind: kind, assetID: assetID); saved(); dismiss() } catch { self.error = error.localizedDescription } }
 }

@@ -73,8 +73,8 @@ func (s *Store) EnvelopeStatuses(ctx context.Context, profileID string, year int
 	rows, err := s.pool.Query(ctx, `
 		SELECT e.id, e.category_id, c.name, c.icon, e.monthly_budget_cents,
 			COALESCE((
-				SELECT -SUM(t.amount_cents)
-				FROM transactions t
+				SELECT -SUM(t.eur_cents)
+				FROM financial_transactions t
 				WHERE t.profile_id = e.profile_id
 				  AND t.category_id = e.category_id
 				  AND t.amount_cents < 0
@@ -114,10 +114,10 @@ func (s *Store) EnvelopeStatuses(ctx context.Context, profileID string, year int
 // pour la détection de récurrence (EF-026).
 func (s *Store) RecurringObservations(ctx context.Context, profileID string) ([]engine.TxObs, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT merchant_key, label, occurred_on, amount_cents
-		FROM transactions
+		SELECT merchant_key, label, occurred_on, eur_cents
+		FROM financial_transactions
 		WHERE profile_id = $1 AND merchant_key <> ''
-		  AND occurred_on >= CURRENT_DATE - interval '18 months'
+		  AND occurred_on >= CURRENT_DATE - interval '18 months' AND occurred_on<=CURRENT_DATE
 		ORDER BY occurred_on`, profileID)
 	if err != nil {
 		return nil, fmt.Errorf("RecurringObservations: %w", err)
@@ -139,22 +139,8 @@ func (s *Store) RecurringObservations(ctx context.Context, profileID string) ([]
 // comptes courants et livrets non archivés (EF-014/EF-027).
 func (s *Store) CashBalance(ctx context.Context, profileID string) (money.Cents, error) {
 	var cash int64
-	err := s.pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(lv.value_cents), 0) FROM (
-			SELECT DISTINCT ON (v.asset_id)
-			       v.value_cents * COALESCE(fx.rate_micro, 1000000) / 1000000 AS value_cents
-			FROM valuations v
-			JOIN assets a ON a.id = v.asset_id
-			LEFT JOIN fx_rates fx ON fx.currency = a.currency
-			WHERE v.profile_id = $1 AND a.archived = false
-			  AND a.kind IN ('checking', 'savings')
-			ORDER BY v.asset_id, v.as_of DESC, v.created_at DESC
-		) lv`, profileID,
-	).Scan(&cash)
-	if err != nil {
-		return 0, fmt.Errorf("CashBalance: %w", err)
-	}
-	return money.Cents(cash), nil
+	err := s.pool.QueryRow(ctx, `SELECT COALESCE(SUM(amount_eur(current_asset_value(a.profile_id,a.id),a.currency,CURRENT_DATE,a.profile_id)),0) FROM assets a WHERE a.profile_id=$1 AND NOT a.archived AND a.kind IN ('checking','savings')`, profileID).Scan(&cash)
+	return money.Cents(cash), err
 }
 
 // AvgDailyVariableSpend — dépense variable moyenne par jour sur 90 jours,
@@ -162,10 +148,10 @@ func (s *Store) CashBalance(ctx context.Context, profileID string) (money.Cents,
 func (s *Store) AvgDailyVariableSpend(ctx context.Context, profileID string, excludeKeys []string) (money.Cents, error) {
 	var total int64
 	err := s.pool.QueryRow(ctx, `
-		SELECT COALESCE(-SUM(amount_cents), 0)
-		FROM transactions
+		SELECT COALESCE(-SUM(eur_cents), 0)
+		FROM financial_transactions
 		WHERE profile_id = $1 AND amount_cents < 0
-		  AND occurred_on >= CURRENT_DATE - interval '90 days'
+		  AND occurred_on >= CURRENT_DATE - interval '90 days' AND occurred_on<=CURRENT_DATE
 		  AND NOT (merchant_key = ANY($2))`,
 		profileID, excludeKeys,
 	).Scan(&total)
@@ -180,10 +166,10 @@ func (s *Store) FlowTotals3M(ctx context.Context, profileID string) (income, exp
 	var inc, exp int64
 	err = s.pool.QueryRow(ctx, `
 		SELECT
-			COALESCE(SUM(amount_cents) FILTER (WHERE amount_cents > 0), 0),
-			COALESCE(-SUM(amount_cents) FILTER (WHERE amount_cents < 0), 0)
-		FROM transactions
-		WHERE profile_id = $1 AND occurred_on >= CURRENT_DATE - interval '3 months'`,
+			COALESCE(SUM(eur_cents) FILTER (WHERE amount_cents > 0), 0),
+			COALESCE(-SUM(eur_cents) FILTER (WHERE amount_cents < 0), 0)
+		FROM financial_transactions
+		WHERE profile_id = $1 AND occurred_on >= CURRENT_DATE - interval '3 months' AND occurred_on<=CURRENT_DATE`,
 		profileID,
 	).Scan(&inc, &exp)
 	if err != nil {
@@ -194,29 +180,19 @@ func (s *Store) FlowTotals3M(ctx context.Context, profileID string) (income, exp
 
 // AssetKindValues — valeur totale par type d'actif (diversification).
 func (s *Store) AssetKindValues(ctx context.Context, profileID string) (map[string]money.Cents, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT kind, SUM(value_cents) FROM (
-			SELECT DISTINCT ON (v.asset_id) a.kind,
-			       v.value_cents * COALESCE(fx.rate_micro, 1000000) / 1000000 AS value_cents
-			FROM valuations v
-			JOIN assets a ON a.id = v.asset_id
-			LEFT JOIN fx_rates fx ON fx.currency = a.currency
-			WHERE v.profile_id = $1 AND a.archived = false
-			ORDER BY v.asset_id, v.as_of DESC, v.created_at DESC
-		) lv GROUP BY kind`, profileID)
+	rows, err := s.pool.Query(ctx, `SELECT a.kind,COALESCE(SUM(amount_eur(current_asset_value(a.profile_id,a.id),a.currency,CURRENT_DATE,a.profile_id)),0) FROM assets a WHERE a.profile_id=$1 AND NOT a.archived GROUP BY a.kind`, profileID)
 	if err != nil {
-		return nil, fmt.Errorf("AssetKindValues: %w", err)
+		return nil, err
 	}
 	defer rows.Close()
-
 	out := map[string]money.Cents{}
 	for rows.Next() {
 		var kind string
-		var v int64
-		if err := rows.Scan(&kind, &v); err != nil {
-			return nil, fmt.Errorf("AssetKindValues: scan: %w", err)
+		var value int64
+		if err = rows.Scan(&kind, &value); err != nil {
+			return nil, err
 		}
-		out[kind] = money.Cents(v)
+		out[kind] = money.Cents(value)
 	}
 	return out, rows.Err()
 }
@@ -225,26 +201,27 @@ func (s *Store) AssetKindValues(ctx context.Context, profileID string) (map[stri
 
 // Goal — un objectif de vie.
 type Goal struct {
-	ID         string      `json:"id"`
-	Name       string      `json:"name"`
-	Icon       string      `json:"icon"`
-	Target     money.Cents `json:"target_cents"`
-	TargetDate *time.Time  `json:"target_date,omitempty"`
-	AssetID    *string     `json:"asset_id,omitempty"`
-	AssetName  *string     `json:"asset_name,omitempty"`
-	CreatedAt  time.Time   `json:"created_at"`
+	ID             string      `json:"id"`
+	Name           string      `json:"name"`
+	Icon           string      `json:"icon"`
+	Target         money.Cents `json:"target_cents"`
+	MonthlySavings money.Cents `json:"monthly_savings_cents"`
+	TargetDate     *time.Time  `json:"target_date,omitempty"`
+	AssetID        *string     `json:"asset_id,omitempty"`
+	AssetName      *string     `json:"asset_name,omitempty"`
+	CreatedAt      time.Time   `json:"created_at"`
 }
 
 const goalSelect = `
 	SELECT g.id, g.name, g.icon, g.target_cents, g.target_date, g.asset_id,
-	       a.name, g.created_at
+	       a.name, g.created_at, g.monthly_savings_cents
 	FROM goals g
 	LEFT JOIN assets a ON a.id = g.asset_id`
 
 func scanGoal(row pgx.Row) (Goal, error) {
 	var g Goal
 	err := row.Scan(&g.ID, &g.Name, &g.Icon, &g.Target, &g.TargetDate,
-		&g.AssetID, &g.AssetName, &g.CreatedAt)
+		&g.AssetID, &g.AssetName, &g.CreatedAt, &g.MonthlySavings)
 	return g, err
 }
 
@@ -304,9 +281,8 @@ func (s *Store) DeleteGoal(ctx context.Context, profileID, id string) error {
 func (s *Store) AssetLatestValue(ctx context.Context, profileID, assetID string) (money.Cents, error) {
 	var v int64
 	err := s.pool.QueryRow(ctx, `
-		SELECT value_cents FROM valuations
-		WHERE profile_id = $1 AND asset_id = $2
-		ORDER BY as_of DESC, created_at DESC LIMIT 1`,
+		SELECT amount_eur(current_asset_value($1,a.id,CURRENT_DATE),a.currency,CURRENT_DATE,a.profile_id)
+        FROM assets a WHERE a.profile_id=$1 AND a.id=$2`,
 		profileID, assetID,
 	).Scan(&v)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -329,8 +305,8 @@ type CategorySpend struct {
 func (s *Store) SpendingByCategory(ctx context.Context, profileID string, year int, month time.Month, limit int) ([]CategorySpend, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT COALESCE(c.name, 'Sans catégorie'), COALESCE(c.icon, 'questionmark.circle'),
-		       -SUM(t.amount_cents) AS total
-		FROM transactions t
+		       -SUM(t.eur_cents) AS total
+		FROM financial_transactions t
 		LEFT JOIN categories c ON c.id = t.category_id
 		WHERE t.profile_id = $1
 		  AND t.amount_cents < 0
@@ -369,8 +345,8 @@ type MerchantSpend struct {
 // TopMerchants — les plus gros marchands d'un mois calendaire.
 func (s *Store) TopMerchants(ctx context.Context, profileID string, year int, month time.Month, limit int) ([]MerchantSpend, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT mode() WITHIN GROUP (ORDER BY label), COUNT(*), -SUM(amount_cents) AS total
-		FROM transactions
+		SELECT mode() WITHIN GROUP (ORDER BY label), COUNT(*), -SUM(eur_cents) AS total
+		FROM financial_transactions
 		WHERE profile_id = $1 AND amount_cents < 0
 		  AND merchant_key <> ''
 		  AND occurred_on >= make_date($2, $3, 1)

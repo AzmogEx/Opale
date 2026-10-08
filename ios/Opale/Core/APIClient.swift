@@ -25,10 +25,12 @@ enum APIError: LocalizedError {
 final class APIClient: Sendable {
     /// URL de base, ex. `http://localhost:8080` (simulateur → backend local).
     let baseURL: URL
+    private let urlSession: URLSession
     private let tokenProvider: @Sendable () -> String?
 
-    init(baseURL: URL, tokenProvider: @escaping @Sendable () -> String?) {
+    init(baseURL: URL, urlSession: URLSession = .shared, tokenProvider: @escaping @Sendable () -> String?) {
         self.baseURL = baseURL
+        self.urlSession = urlSession
         self.tokenProvider = tokenProvider
     }
 
@@ -37,15 +39,13 @@ final class APIClient: Sendable {
     /// Décodeur JSON tolérant aux deux formats de date du backend :
     /// ISO 8601 avec fractions ("…T17:34:48.753405+02:00") et sans ("…T00:00:00Z").
     nonisolated static func makeDecoder() -> JSONDecoder {
-        let withFractional = ISO8601DateFormatter()
-        withFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let plain = ISO8601DateFormatter()
-        plain.formatOptions = [.withInternetDateTime]
-
         let d = JSONDecoder()
         d.dateDecodingStrategy = .custom { decoder in
             let s = try decoder.singleValueContainer().decode(String.self)
-            if let date = withFractional.date(from: s) ?? plain.date(from: s) {
+            let withFractional = ISO8601DateFormatter()
+            withFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            let plain = ISO8601DateFormatter()
+            if let date = withFractional.date(from: s) ?? plain.date(from: s) ?? Date.fromOpaleDay(s) {
                 return date
             }
             throw DecodingError.dataCorrupted(.init(
@@ -63,7 +63,7 @@ final class APIClient: Sendable {
         let error: Inner
     }
 
-    private func request<T: Decodable>(
+    func request<T: Decodable>(
         _ method: String,
         _ path: String,
         query: [URLQueryItem] = [],
@@ -78,6 +78,7 @@ final class APIClient: Sendable {
 
         var req = URLRequest(url: components.url!)
         req.httpMethod = method
+        req.timeoutInterval = 30
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if authenticated {
             guard let token = tokenProvider() else { throw APIError.notAuthenticated }
@@ -87,11 +88,16 @@ final class APIClient: Sendable {
             req.httpBody = try JSONEncoder().encode(body)
         }
 
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await urlSession.data(for: req)
         guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
 
         guard (200..<300).contains(http.statusCode) else {
-            if http.statusCode == 401 { throw APIError.notAuthenticated }
+            if http.statusCode == 401 {
+                if authenticated, let token = tokenProvider() {
+                    NotificationCenter.default.post(name: .opaleSessionExpired, object: token)
+                }
+                throw APIError.notAuthenticated
+            }
             let message = try? Self.makeDecoder().decode(APIErrorBody.self, from: data).error.message
             throw APIError.badStatus(http.statusCode, message: message)
         }
@@ -128,12 +134,19 @@ final class APIClient: Sendable {
         let kind: String
         let note: String
         let currency: String
+        var initial_value_cents: Int64?
+        var initial_as_of: String?
+        var client_request_id: String?
     }
 
     struct UpsertLiabilityRequest: Encodable {
         let name: String
         let kind: String
         let note: String
+        var currency: String = "EUR"
+        var initial_value_cents: Int64?
+        var initial_as_of: String?
+        var client_request_id: String?
     }
 
     struct AddValuationRequest: Encodable {
@@ -195,7 +208,7 @@ final class APIClient: Sendable {
         monthlySavingsCents: Int64,
         annualReturnBps: Int,
         monthlyExpensesCents: Int64,
-        months: Int = 360
+        months: Int = 360, inflationBps: Int = 0
     ) async throws -> ProjectionResponse {
         try await request(
             "GET", "/v1/projection",
@@ -204,6 +217,7 @@ final class APIClient: Sendable {
                 URLQueryItem(name: "annual_return_bps", value: String(annualReturnBps)),
                 URLQueryItem(name: "monthly_expenses_cents", value: String(monthlyExpensesCents)),
                 URLQueryItem(name: "months", value: String(months)),
+                URLQueryItem(name: "inflation_bps", value: String(inflationBps)),
             ]
         )
     }
@@ -213,10 +227,10 @@ final class APIClient: Sendable {
         return env.assets
     }
 
-    func createAsset(name: String, kind: AssetKind, note: String = "", currency: String = "EUR") async throws -> Asset {
+    func createAsset(name: String, kind: AssetKind, note: String = "", currency: String = "EUR", initialValue: Int64? = nil, initialAsOf: String? = nil, requestID: String? = nil) async throws -> Asset {
         try await request(
             "POST", "/v1/assets/",
-            body: UpsertAssetRequest(name: name, kind: kind.rawValue, note: note, currency: currency)
+            body: UpsertAssetRequest(name: name, kind: kind.rawValue, note: note, currency: currency, initial_value_cents: initialValue, initial_as_of: initialValue == nil ? nil : (initialAsOf ?? Date.now.opaleDayString), client_request_id: requestID)
         )
     }
 
@@ -245,9 +259,10 @@ final class APIClient: Sendable {
 
     func listTransactions(
         from: String? = nil, to: String? = nil,
-        query: String? = nil, categoryID: String? = nil
+        query: String? = nil, categoryID: String? = nil, assetID: String? = nil, offset: Int = 0, limit: Int = 100
     ) async throws -> [Transaction] {
-        var items: [URLQueryItem] = []
+        var items: [URLQueryItem] = [URLQueryItem(name: "offset", value: String(offset)), URLQueryItem(name: "limit", value: String(limit))]
+        if let assetID { items.append(URLQueryItem(name: "asset_id", value: assetID)) }
         if let from { items.append(URLQueryItem(name: "from", value: from)) }
         if let to { items.append(URLQueryItem(name: "to", value: to)) }
         if let query, !query.isEmpty { items.append(URLQueryItem(name: "q", value: query)) }
@@ -257,6 +272,8 @@ final class APIClient: Sendable {
     }
 
     struct CreateTransactionRequest: Encodable {
+        var flowKind: String = "expense_income"
+        var linkedLiabilityID: String? = nil
         let assetID: String
         let amountCents: Int64
         let occurredOn: String
@@ -264,6 +281,7 @@ final class APIClient: Sendable {
         let categoryID: String
         let note: String
         enum CodingKeys: String, CodingKey {
+            case flowKind = "flow_kind", linkedLiabilityID = "linked_liability_id"
             case assetID = "asset_id"
             case amountCents = "amount_cents"
             case occurredOn = "occurred_on"
@@ -282,10 +300,18 @@ final class APIClient: Sendable {
         var note: String?
         var categoryID: String?
         var applyToSimilar: Bool?
+        var amountCents: Int64?
+        var occurredOn: String?
+        var assetID: String?
+        var flowKind: String?
         enum CodingKeys: String, CodingKey {
             case label, note
             case categoryID = "category_id"
             case applyToSimilar = "apply_to_similar"
+            case amountCents = "amount_cents"
+            case occurredOn = "occurred_on"
+            case assetID = "asset_id"
+            case flowKind = "flow_kind"
         }
     }
 
@@ -323,7 +349,7 @@ final class APIClient: Sendable {
     // MARK: Pilotage (P4)
 
     func envelopeStatuses(year: Int, month: Int) async throws -> [EnvelopeStatus] {
-        struct Env: Decodable { let envelopes: [EnvelopeStatus] }
+        struct Env: Decodable { let envelopes: [EnvelopeStatus]? }
         let env: Env = try await request(
             "GET", "/v1/envelopes/",
             query: [
@@ -331,7 +357,7 @@ final class APIClient: Sendable {
                 URLQueryItem(name: "month", value: String(month)),
             ]
         )
-        return env.envelopes
+        return env.envelopes ?? []
     }
 
     struct UpsertEnvelopeRequest: Encodable {
@@ -356,9 +382,9 @@ final class APIClient: Sendable {
     }
 
     func recurringFlows() async throws -> [RecurringFlow] {
-        struct Env: Decodable { let recurring: [RecurringFlow] }
+        struct Env: Decodable { let recurring: [RecurringFlow]? }
         let env: Env = try await request("GET", "/v1/recurring")
-        return env.recurring
+        return env.recurring ?? []
     }
 
     func cashflow(days: Int = 30) async throws -> CashProjection {
@@ -395,15 +421,15 @@ final class APIClient: Sendable {
     }
 
     func alerts() async throws -> [OpaleAlert] {
-        struct Env: Decodable { let alerts: [OpaleAlert] }
+        struct Env: Decodable { let alerts: [OpaleAlert]? }
         let env: Env = try await request("GET", "/v1/alerts")
-        return env.alerts
+        return env.alerts ?? []
     }
 
     func listGoals() async throws -> [GoalStatus] {
-        struct Env: Decodable { let goals: [GoalStatus] }
+        struct Env: Decodable { let goals: [GoalStatus]? }
         let env: Env = try await request("GET", "/v1/goals/")
-        return env.goals
+        return env.goals ?? []
     }
 
     struct CreateGoalRequest: Encodable {
@@ -412,10 +438,12 @@ final class APIClient: Sendable {
         let targetCents: Int64
         let targetDate: String
         let assetID: String
+        var monthlySavingsCents: Int64 = 0
         enum CodingKeys: String, CodingKey {
             case name, icon
             case targetCents = "target_cents"
             case targetDate = "target_date"
+            case monthlySavingsCents = "monthly_savings_cents"
             case assetID = "asset_id"
         }
     }
@@ -434,10 +462,10 @@ final class APIClient: Sendable {
         return env.liabilities
     }
 
-    func createLiability(name: String, kind: LiabilityKind, note: String = "") async throws -> Liability {
+    func createLiability(name: String, kind: LiabilityKind, note: String = "", currency: String = "EUR", initialValue: Int64? = nil, initialAsOf: String? = nil, requestID: String? = nil) async throws -> Liability {
         try await request(
             "POST", "/v1/liabilities/",
-            body: UpsertLiabilityRequest(name: name, kind: kind.rawValue, note: note)
+            body: UpsertLiabilityRequest(name: name, kind: kind.rawValue, note: note, currency: currency, initial_value_cents: initialValue, initial_as_of: initialValue == nil ? nil : (initialAsOf ?? Date.now.opaleDayString), client_request_id: requestID)
         )
     }
 
@@ -466,15 +494,18 @@ final class APIClient: Sendable {
     struct AskRequest: Encodable {
         let question: String
         let allowCloud: Bool
+        var history: [HistoryMessage] = []
         enum CodingKeys: String, CodingKey {
-            case question
+            case history, question
             case allowCloud = "allow_cloud"
         }
     }
 
-    func ask(question: String, allowCloud: Bool = false) async throws -> AskResponse {
+    struct HistoryMessage: Encodable { let role: String; let text: String }
+
+    func ask(question: String, allowCloud: Bool = false, history: [HistoryMessage] = []) async throws -> AskResponse {
         try await request("POST", "/v1/assistant/ask",
-                          body: AskRequest(question: question, allowCloud: allowCloud))
+                          body: AskRequest(question: question, allowCloud: allowCloud, history: history))
     }
 
     func risks() async throws -> [Risk] {
@@ -612,14 +643,19 @@ final class APIClient: Sendable {
     }
 
     /// Télécharge le contenu déchiffré d'un document (octets bruts).
-    func documentContent(id: String) async throws -> Data {
+    func documentContent(id: String, grantID: String? = nil) async throws -> Data {
         guard let token = tokenProvider() else { throw APIError.notAuthenticated }
-        var req = URLRequest(url: baseURL.appending(path: "/v1/documents/\(id)/content"))
+        var req = URLRequest(url: baseURL.appending(path: grantID.map { "/v1/emergency/\($0)/documents/\(id)" } ?? "/v1/documents/\(id)/content"))
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await urlSession.data(for: req)
         guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else {
-            if http.statusCode == 401 { throw APIError.notAuthenticated }
+            if http.statusCode == 401 {
+                if let token = tokenProvider() {
+                    NotificationCenter.default.post(name: .opaleSessionExpired, object: token)
+                }
+                throw APIError.notAuthenticated
+            }
             throw APIError.badStatus(http.statusCode, message: nil)
         }
         return data
@@ -691,12 +727,14 @@ final class APIClient: Sendable {
         let siren: String
         let ownershipBps: Int
         let ccaCents: Int64
+        var ccaAssetID: String? = nil
         let annualDividendsCents: Int64
         let monthlySalaryCents: Int64
         enum CodingKeys: String, CodingKey {
             case siren
             case ownershipBps = "ownership_bps"
             case ccaCents = "cca_cents"
+            case ccaAssetID = "cca_asset_id"
             case annualDividendsCents = "annual_dividends_cents"
             case monthlySalaryCents = "monthly_salary_cents"
         }
@@ -803,12 +841,13 @@ final class APIClient: Sendable {
         return (env.rates ?? [], env.unrated ?? [])
     }
 
-    func upsertFXRate(currency: String, rateMicro: Int64) async throws {
+    func upsertFXRate(currency: String, rateMicro: Int64, asOf: String) async throws {
         struct Req: Encodable {
             let rateMicro: Int64
-            enum CodingKeys: String, CodingKey { case rateMicro = "rate_micro" }
+            let as_of: String
+            enum CodingKeys: String, CodingKey { case rateMicro = "rate_micro", as_of }
         }
-        let _: FXRate = try await request("PUT", "/v1/fx/\(currency)", body: Req(rateMicro: rateMicro))
+        let _: FXRate = try await request("PUT", "/v1/fx/\(currency)", body: Req(rateMicro: rateMicro, as_of: asOf))
     }
 
     func deleteFXRate(currency: String) async throws {
@@ -864,7 +903,7 @@ final class APIClient: Sendable {
         guard let token = tokenProvider() else { throw APIError.notAuthenticated }
         var req = URLRequest(url: baseURL.appending(path: "/v1/export"))
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await urlSession.data(for: req)
         guard let http = response as? HTTPURLResponse,
               (200..<300).contains(http.statusCode) else {
             throw APIError.invalidResponse
@@ -872,3 +911,5 @@ final class APIClient: Sendable {
         return data
     }
 }
+
+extension Notification.Name { static let opaleSessionExpired = Notification.Name("opale.session.expired") }

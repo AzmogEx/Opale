@@ -10,6 +10,7 @@ struct BankSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
 
+    @State private var disconnecting: BankLink?
     @State private var status: BankStatus?
     @State private var syncResults: [BankSyncResult] = []
     @State private var isSyncing = false
@@ -24,6 +25,7 @@ struct BankSheet: View {
                         notConfiguredSection
                     } else {
                         linksSection(status.links ?? [])
+                        NavigationLink { BankAccountsView() } label: { Label("Associer les comptes bancaires", systemImage: "link") }
                         if !syncResults.isEmpty {
                             resultsSection
                         }
@@ -48,6 +50,9 @@ struct BankSheet: View {
                 }
             }
             .task { await load() }
+            .confirmationDialog("Révoquer cette banque ?", isPresented: Binding(get: { disconnecting != nil }, set: { if !$0 { disconnecting = nil } }), titleVisibility: .visible) {
+                Button("Révoquer la connexion", role: .destructive) { if let link = disconnecting { Task { do { try await session.api.bankDisconnect(id: link.id); await load() } catch { errorMessage = error.localizedDescription }; disconnecting = nil } } }
+            } message: { Text("Les transactions déjà importées sont conservées. L’accès bancaire sera révoqué.") }
             .sheet(isPresented: $showConnect) {
                 BankConnectSheet {
                     Task { await load() }
@@ -62,7 +67,7 @@ struct BankSheet: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Synchro bancaire non configurée")
                         .font(.subheadline.weight(.semibold))
-                    Text("Crée un compte GoCardless Bank Account Data (gratuit, DSP2) et définis OPALE_GC_SECRET_ID / OPALE_GC_SECRET_KEY sur le serveur. En attendant, l'import CSV fait très bien le travail.")
+                    Text("La connexion bancaire n’est pas disponible sur ce serveur. Tu peux importer un relevé CSV ou OFX depuis Flux.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -111,13 +116,12 @@ struct BankSheet: View {
                     }
                 }
             }
-            .onDelete { indexSet in
-                Task {
-                    for i in indexSet {
-                        try? await session.api.bankDisconnect(id: links[i].id)
-                    }
-                    await load()
-                }
+            .onDelete { indexSet in if let i = indexSet.first { disconnecting = links[i] } }
+            ForEach(links) { link in
+                if let status = link.syncStatus { Text("\(link.institutionName) · \(status)").font(.caption) }
+                if let message = link.lastError, !message.isEmpty { Text(message).foregroundStyle(.red) }
+                if let next = link.nextSyncAt { Text("Prochaine synchronisation possible : \(next.formatted(date: .abbreviated, time: .shortened))").font(.caption) }
+                Button("Renouveler le consentement · \(link.institutionName)") { Task { await renew(link.id) } }
             }
 
             Button {
@@ -188,10 +192,22 @@ struct BankSheet: View {
         switch r.status {
         case "synced": "\(r.imported) nouveau(x) mouvement(s), \(r.duplicates) déjà connu(s)"
         case "pending_consent": "Consentement pas encore donné à la banque"
+        case "renew_consent": "Consentement expiré : renouvelle-le"
+        case "needs_mapping": "Associe chaque compte bancaire à un compte Opale"
+        case "cooldown": "Synchronisation différée : respecte le prochain créneau"
         default: r.error ?? "Erreur"
         }
     }
 
+    private func renew(_ id: String) async {
+        do {
+            struct Body: Encodable { let redirect = "opale://bank-linked" }
+            struct Result: Decodable { let consent_link: String }
+            let result: Result = try await session.api.request("POST", "/v1/bank/links/\(id)/renew", body: Body())
+            if let url = URL(string: result.consent_link) { openURL(url) }
+            await load()
+        } catch { errorMessage = error.localizedDescription }
+    }
     private func load() async {
         do {
             status = try await session.api.bankStatus()
@@ -238,7 +254,7 @@ private struct BankConnectSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("Compte Opale qui recevra les mouvements") {
+                Section("Compte de référence") {
                     Picker("Compte", selection: $assetID) {
                         Text("Choisir…").tag("")
                         ForEach(assets.filter { $0.kind == .checking || $0.kind == .savings }) { a in
@@ -246,6 +262,7 @@ private struct BankConnectSheet: View {
                         }
                     }
                 }
+                Section { Text("Après le consentement, chaque compte découvert devra être associé séparément dans Comptes bancaires.").font(.caption) }
                 Section("Ta banque") {
                     ForEach(filtered) { inst in
                         Button {

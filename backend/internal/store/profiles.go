@@ -31,7 +31,7 @@ func (s *Store) CreateProfile(ctx context.Context, name, pinHash, privacyDefault
 func (s *Store) ListProfiles(ctx context.Context) ([]Profile, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, name, privacy_default, created_at, updated_at
-		FROM profiles ORDER BY created_at`)
+		FROM profiles WHERE NOT is_demo ORDER BY created_at`)
 	if err != nil {
 		return nil, fmt.Errorf("ListProfiles: %w", err)
 	}
@@ -53,7 +53,7 @@ func (s *Store) GetProfile(ctx context.Context, id string) (Profile, error) {
 	var p Profile
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, name, privacy_default, created_at, updated_at
-		FROM profiles WHERE id = $1`, id,
+		FROM profiles WHERE id = $1 AND demo_ready AND (NOT is_demo OR demo_expires_at>now())`, id,
 	).Scan(&p.ID, &p.Name, &p.PrivacyDefault, &p.CreatedAt, &p.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Profile{}, ErrNotFound
@@ -67,7 +67,7 @@ func (s *Store) GetProfile(ctx context.Context, id string) (Profile, error) {
 // ProfilePINHash renvoie le hash du PIN d'un profil (pour la connexion).
 func (s *Store) ProfilePINHash(ctx context.Context, id string) (string, error) {
 	var hash string
-	err := s.pool.QueryRow(ctx, `SELECT pin_hash FROM profiles WHERE id = $1`, id).Scan(&hash)
+	err := s.pool.QueryRow(ctx, `SELECT pin_hash FROM profiles WHERE id = $1 AND demo_ready AND (NOT is_demo OR demo_expires_at>now())`, id).Scan(&hash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrNotFound
 	}

@@ -7,6 +7,7 @@ import Charts
 /// en graphe scrubable, et les totaux actifs/dettes/cash en cartes de verre.
 struct HomeView: View {
     @Environment(SessionStore.self) private var session
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     enum ViewState {
         case loading
@@ -28,12 +29,14 @@ struct HomeView: View {
         var monthlyDelta: Cents? {
             let pts = history.points
             guard pts.count >= 2 else { return nil }
-            return pts[pts.count - 1].net - pts[pts.count - 2].net
+            let delta = pts[pts.count - 1].net.raw.subtractingReportingOverflow(pts[pts.count - 2].net.raw)
+            return delta.overflow ? nil : Cents(delta.partialValue)
         }
     }
 
     @State private var viewState: ViewState = .loading
     @State private var selectedDate: Date?
+    @State private var animatedNet: Cents = .zero
     @State private var showSettings = false
     /// Mode hors-ligne : date du cache affiché quand l'API est injoignable.
     @State private var offlineSince: Date?
@@ -41,7 +44,7 @@ struct HomeView: View {
     @Namespace private var zoomSpace
 
     // Célébration de palier (EF-016) : dernier palier déjà fêté (euros).
-    @AppStorage("home.celebratedMilestone") private var celebratedMilestone = 0
+    private var celebratedMilestone: Int { session.preferenceInt("home.celebratedMilestone", default: -1) }
     @State private var showConfetti = false
 
     /// Paliers de patrimoine net (euros) — alignés sur la timeline (EF-045).
@@ -72,6 +75,7 @@ struct HomeView: View {
                         Image(systemName: session.discreetMode ? "eye.slash.fill" : "eye")
                             .contentTransition(.symbolEffect(.replace))
                     }
+                    .accessibilityLabel(session.discreetMode ? "Afficher les montants" : "Masquer les montants")
                     .sensoryFeedback(.impact(weight: .light), trigger: session.discreetMode)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -86,7 +90,7 @@ struct HomeView: View {
             .sheet(isPresented: $showSettings) {
                 SettingsView()
             }
-            .task { await load() }
+            .task(id: session.refreshID) { await load() }
             .refreshable { await load() }
         }
     }
@@ -117,7 +121,7 @@ struct HomeView: View {
                     // en scène avec son propre ressort (feel Revolut).
                     VStack(spacing: 16) {
                         if let offlineSince {
-                            Label("Hors ligne — données du \(offlineSince.formatted(.dateTime.day().month().hour().minute()))",
+                            Label("Hors ligne — données du \(offlineSince.opaleFormatted(.dateTime.day().month().hour().minute()))",
                                   systemImage: "wifi.slash")
                                 .font(.caption.weight(.medium))
                                 .foregroundStyle(.secondary)
@@ -125,16 +129,22 @@ struct HomeView: View {
                                 .padding(.vertical, 6)
                                 .glassEffect(.regular, in: .capsule)
                         }
-                        alertsBanner(snapshot.alerts)
+                        alertsBanner(snapshot.alerts).sensitive()
                             .cascadeIn(0)
+                        if let missing = snapshot.netWorth.missingValuations, missing > 0 {
+                            Label("Total incomplet : \(missing) actifs ou dettes sans valorisation", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+                        }
                         heroCard(snapshot)
+                            .onAppear { animatedNet = snapshot.netWorth.net }
+                            .onChange(of: snapshot.netWorth.net) { _, value in animatedNet = value }
                             .cascadeIn(1)
-                        chartCard(snapshot)
+                        chartCard(snapshot).sensitive()
                             .cascadeIn(2)
                         analyticsCard
                             .cascadeIn(3)
                         statsRow(snapshot)
                             .cascadeIn(4)
+                        milestoneCard(snapshot)
                         if let health = snapshot.health {
                             healthCard(health)
                                 .cascadeIn(5)
@@ -220,17 +230,28 @@ struct HomeView: View {
                     .lineLimit(1)
 
                 if let selectedDate {
-                    Text(selectedDate.formatted(.dateTime.day().month(.wide).year()))
+                    Text(selectedDate.opaleFormatted(.dateTime.day().month(.wide).year()))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .contentTransition(.numericText())
                 } else if let delta = snapshot.monthlyDelta {
-                    HStack(spacing: 6) {
-                        Image(systemName: delta.raw >= 0 ? "arrow.up.right" : "arrow.down.right")
-                            .font(.caption.bold())
-                            .foregroundStyle(OpaleTheme.delta(delta))
-                        AmountText(cents: delta, style: .signedDelta)
-                            .font(.subheadline.weight(.semibold))
+                    let layout = dynamicTypeSize.isAccessibilitySize
+                        ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
+                        : AnyLayout(HStackLayout(spacing: 6))
+                    layout {
+                        HStack(spacing: 6) {
+                            Image(systemName: delta.raw >= 0 ? "arrow.up.right" : "arrow.down.right")
+                                .font(.caption.bold())
+                                .foregroundStyle(OpaleTheme.delta(delta))
+                            AmountText(cents: delta, style: .signedDelta)
+                                .font(.subheadline.weight(.semibold))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.75)
+                        }
+                        if let previous = snapshot.history.points.dropLast().last?.net, previous.raw > 0 {
+                            let percent = Decimal(delta.raw) / Decimal(previous.raw) * 100
+                            Text("(\(percent.formatted(.number.precision(.fractionLength(1)))) %)").sensitive()
+                        }
                         Text("ce mois-ci")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
@@ -244,7 +265,7 @@ struct HomeView: View {
     private func displayedNet(_ snapshot: Snapshot) -> Cents {
         guard let selectedDate,
               let point = closestPoint(to: selectedDate, in: snapshot.history.points)
-        else { return snapshot.netWorth.net }
+        else { return animatedNet }
         return point.net
     }
 
@@ -269,6 +290,9 @@ struct HomeView: View {
                     .frame(minHeight: 160)
                 } else {
                     netWorthChart(points)
+                        // The chart retains an accessible value per point. Keep its
+                        // supporting axis labels within the plot at the largest sizes.
+                        .environment(\.dynamicTypeSize, dynamicTypeSize.isAccessibilitySize ? .xxxLarge : dynamicTypeSize)
                         .frame(minHeight: 180, maxHeight: 260)
                 }
             }
@@ -298,7 +322,7 @@ struct HomeView: View {
             .interpolationMethod(.catmullRom)
             .lineStyle(StrokeStyle(lineWidth: 3, lineCap: .round))
             .foregroundStyle(OpaleTheme.accent)
-            .accessibilityLabel(point.asOf.formatted(.dateTime.month(.wide).year()))
+            .accessibilityLabel(point.asOf.opaleFormatted(.dateTime.month(.wide).year()))
             .accessibilityValue(MoneyFormat.eurosWhole(point.net))
 
             // Repère du point scrubé.
@@ -315,6 +339,7 @@ struct HomeView: View {
                 .foregroundStyle(OpaleTheme.accent)
             }
         }
+        .accessibilityIdentifier("net-worth-chart")
         .chartXSelection(value: $selectedDate)
         .chartYScale(domain: .automatic(includesZero: false))
         .chartXAxis {
@@ -329,6 +354,9 @@ struct HomeView: View {
                 AxisValueLabel {
                     if let euros = value.as(Double.self) {
                         Text(Self.compactEuros(euros))
+                            .font(.caption2)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .sensitive()
                     }
                 }
             }
@@ -453,39 +481,62 @@ struct HomeView: View {
         }
     }
 
+    private func milestoneCard(_ snapshot: Snapshot) -> some View {
+        GlassCard {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Jalons", systemImage: "flag.checkered").font(.headline)
+                let reached = Self.milestones.last { snapshot.netWorth.net.raw >= Int64($0) * 100 }
+                if let reached { LabeledContent("Palier atteint") { AmountText(cents: Cents(Int64(reached) * 100), style: .whole) } }
+                if let next = Self.milestones.first(where: { snapshot.netWorth.net.raw < Int64($0) * 100 }) { LabeledContent("Prochain palier") { AmountText(cents: Cents(Int64(next) * 100), style: .whole) } }
+                if let ready = snapshot.health?.emergencyFundReady {
+                    Label(ready ? "Fonds d’urgence : six mois en réserve" : "Fonds d’urgence : à construire ou dépenses inconnues", systemImage: ready ? "checkmark.seal" : "shield").font(.caption)
+                }
+            }
+        }
+    }
+    private func celebrateEmergencyFund(_ ready: Bool?) {
+        guard let ready else { return }
+        let previous = session.preferenceInt("milestone.emergency", default: -1)
+        session.setPreference(ready ? 1 : 0, "milestone.emergency")
+        guard previous == 0, ready else { return }
+        SoundPlayer.play(.success)
+        withAnimation { showConfetti = true }
+        Task { try? await Task.sleep(for: .seconds(4)); withAnimation { showConfetti = false } }
+    }
+
     // MARK: - Chargement
 
-    private var cacheKey: String { "home-\(session.profileID)" }
+    private var cacheKey: String { "home-\(session.profileKey)" }
 
     private func load() async {
+        let requestedProfile = session.profileKey
+        let requestedCacheKey = cacheKey
         // Ouverture instantanée : le dernier état connu s'affiche tout de
         // suite, le réseau ne fait que rafraîchir.
         if case .loading = viewState,
-           let cached = DiskCache.load(Snapshot.self, key: cacheKey) {
+           let cached = DiskCache.load(Snapshot.self, key: requestedCacheKey) {
             viewState = .loaded(cached.value)
         }
         do {
             async let netWorth = session.api.netWorth()
             async let history = session.api.netWorthHistory(months: 12)
-            async let assets = session.api.listAssets()
+            async let flow = session.api.cashflow(days: 1)
             async let health = session.api.healthScore()
             async let alerts = session.api.alerts()
 
-            // Cash disponible (EF-014) : somme des comptes courants + livrets.
-            // Somme d'affichage en entiers ; le patrimoine net, lui, vient du backend.
-            let cash = try await assets
-                .filter { ($0.kind == .checking || $0.kind == .savings) && !$0.archived }
-                .compactMap(\.latestValue)
-                .reduce(.zero, +)
+            let cash = try await flow.startCash
 
             let loadedNetWorth = try await netWorth
             let loadedHistory = try await history
+            let loadedHealth = try? await health
+            let loadedAlerts = (try? await alerts) ?? []
+            guard requestedProfile == session.profileKey, !Task.isCancelled else { return }
             viewState = .loaded(Snapshot(
                 netWorth: loadedNetWorth,
                 history: loadedHistory,
                 cash: cash,
-                health: try? await health,
-                alerts: (try? await alerts) ?? []
+                health: loadedHealth,
+                alerts: loadedAlerts
             ))
 
             // Publie l'instantané pour le widget (App Group, local uniquement).
@@ -495,14 +546,16 @@ struct HomeView: View {
             )
 
             celebrateIfMilestoneReached(net: loadedNetWorth.net)
+            celebrateEmergencyFund(loadedHealth?.emergencyFundReady)
             offlineSince = nil
             if case .loaded(let snapshot) = viewState {
-                DiskCache.save(snapshot, key: cacheKey)
+                DiskCache.save(snapshot, key: requestedCacheKey)
             }
         } catch {
+            guard requestedProfile == session.profileKey, !Task.isCancelled else { return }
             // API injoignable : on RESTE sur le cache, avec un bandeau.
             if case .loaded = viewState {
-                offlineSince = DiskCache.load(Snapshot.self, key: cacheKey)?.at ?? .now
+                offlineSince = DiskCache.load(Snapshot.self, key: requestedCacheKey)?.at ?? .now
             } else {
                 viewState = .error(error.localizedDescription)
             }
@@ -515,12 +568,12 @@ struct HomeView: View {
     private func celebrateIfMilestoneReached(net: Cents) {
         let euros = Int(net.raw / 100)
         let reached = Self.milestones.last { euros >= $0 } ?? 0
-        if celebratedMilestone == 0 && reached > 0 {
-            celebratedMilestone = reached
+        if celebratedMilestone < 0 {
+            session.setPreference(reached, "home.celebratedMilestone")
             return
         }
         guard reached > celebratedMilestone else { return }
-        celebratedMilestone = reached
+        session.setPreference(reached, "home.celebratedMilestone")
         SoundPlayer.play(.success)
         withAnimation(.easeIn(duration: 0.2)) { showConfetti = true }
         Task {

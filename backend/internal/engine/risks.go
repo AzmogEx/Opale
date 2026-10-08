@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"math/big"
 	"sort"
 
 	"github.com/opale-app/opale/internal/money"
@@ -29,11 +30,11 @@ type Risk struct {
 // RiskInputs — mesures nécessaires au radar. Rassemblées par le store,
 // le calcul reste pur et testable (CA-2).
 type RiskInputs struct {
-	Cash        money.Cents // cash disponible (comptes + livrets)
-	Assets      money.Cents // total actifs
-	Liabilities money.Cents // total dettes
-	Income3M    money.Cents // revenus des 3 derniers mois
-	Expenses3M  money.Cents // dépenses des 3 derniers mois (positives)
+	Cash         money.Cents // cash disponible (comptes + livrets)
+	Assets       money.Cents // total actifs
+	Liabilities  money.Cents // total dettes
+	Income3M     money.Cents // revenus des 3 derniers mois
+	Expenses3M   money.Cents // dépenses des 3 derniers mois (positives)
 	FixedMonthly money.Cents // charges fixes mensuelles (récurrentes, positives)
 	// IncomeSources : nombre de flux récurrents entrants distincts.
 	IncomeSources int
@@ -59,7 +60,7 @@ func severityRank(s string) int {
 // DetectRisks passe les règles du radar et renvoie les risques détectés,
 // triés par sévérité décroissante (ordre stable et déterministe).
 func DetectRisks(in RiskInputs) []Risk {
-	var risks []Risk
+	risks := []Risk{}
 	add := func(id, title, severity, detail string) {
 		risks = append(risks, Risk{ID: id, Title: title, Severity: severity, Detail: detail})
 	}
@@ -75,7 +76,7 @@ func DetectRisks(in RiskInputs) []Risk {
 
 	// ── Fonds d'urgence insuffisant ───────────────────────────────────────
 	if monthlyExpenses > 0 {
-		monthsX100 := int64(in.Cash) * 100 / monthlyExpenses
+		monthsX100 := indicator(int64(in.Cash), monthlyExpenses, 100, 0, 300)
 		switch {
 		case monthsX100 < 100:
 			add("emergency_fund", "Fonds d'urgence quasi inexistant", SeverityCritical,
@@ -92,7 +93,7 @@ func DetectRisks(in RiskInputs) []Risk {
 			add("debt", "Dettes sans actifs en face", SeverityCritical,
 				"Des dettes existent sans actifs pour les couvrir.")
 		} else {
-			ratioBps := int64(in.Liabilities) * 10_000 / int64(in.Assets)
+			ratioBps := indicator(int64(in.Liabilities), int64(in.Assets), 10000, 0, 10000)
 			switch {
 			case ratioBps >= 6_000:
 				add("debt", "Endettement lourd", SeverityCritical,
@@ -107,7 +108,7 @@ func DetectRisks(in RiskInputs) []Risk {
 	// ── Cash dormant ──────────────────────────────────────────────────────
 	if monthlyExpenses > 0 && in.Assets > 0 {
 		monthsOfCash := int64(in.Cash) / monthlyExpenses
-		cashShareBps := int64(in.Cash) * 10_000 / int64(in.Assets)
+		cashShareBps := indicator(int64(in.Cash), int64(in.Assets), 10000, 0, 10000)
 		if monthsOfCash >= 12 && cashShareBps >= 3_000 {
 			add("idle_cash", "Cash dormant", SeverityInfo,
 				fmt.Sprintf("%d mois de dépenses dorment en liquidités (%d %% du patrimoine) : au-delà du fonds d'urgence, ce cash perd de la valeur avec l'inflation.",
@@ -123,7 +124,7 @@ func DetectRisks(in RiskInputs) []Risk {
 
 	// ── Charges fixes écrasantes ──────────────────────────────────────────
 	if monthlyIncome > 0 && in.FixedMonthly > 0 {
-		ratioBps := int64(in.FixedMonthly) * 10_000 / monthlyIncome
+		ratioBps := indicator(int64(in.FixedMonthly), monthlyIncome, 10000, 0, 10000)
 		switch {
 		case ratioBps >= 8_000:
 			add("fixed_costs", "Charges fixes écrasantes", SeverityCritical,
@@ -136,11 +137,8 @@ func DetectRisks(in RiskInputs) []Risk {
 
 	// ── Concentration / illiquidité ───────────────────────────────────────
 	if len(in.AssetKindValues) > 0 {
-		var total int64
-		for _, v := range in.AssetKindValues {
-			total += int64(v)
-		}
-		if total > 0 {
+		total := positiveAssetTotal(in.AssetKindValues)
+		if total.Sign() > 0 {
 			// Concentration : un seul type d'actif domine.
 			kinds := make([]string, 0, len(in.AssetKindValues))
 			for k := range in.AssetKindValues {
@@ -148,7 +146,7 @@ func DetectRisks(in RiskInputs) []Risk {
 			}
 			sort.Strings(kinds) // ordre déterministe
 			for _, k := range kinds {
-				share := int64(in.AssetKindValues[k]) * 10_000 / total
+				share := boundedIndicator(big.NewInt(int64(max(in.AssetKindValues[k], 0))), total, 10000, 0, 10000)
 				if share >= 8_000 && len(in.AssetKindValues) >= 2 {
 					add("concentration", "Patrimoine trop concentré", SeverityWarning,
 						fmt.Sprintf("Un seul type d'actif (%s) pèse %d %% du patrimoine.", k, share/100))
@@ -156,8 +154,11 @@ func DetectRisks(in RiskInputs) []Risk {
 				}
 			}
 			// Illiquidité : immobilier + objets ≥ 70 %.
-			illiquid := int64(in.AssetKindValues["real_estate"]) + int64(in.AssetKindValues["object"])
-			if illiquid*10_000/total >= 7_000 {
+			illiquid := new(big.Int)
+			for _, k := range []string{"real_estate", "object", "valuable", "vehicle"} {
+				illiquid.Add(illiquid, big.NewInt(int64(max(in.AssetKindValues[k], 0))))
+			}
+			if boundedIndicator(illiquid, total, 10000, 0, 10000) >= 7_000 {
 				add("illiquidity", "Patrimoine peu liquide", SeverityWarning,
 					"Plus de 70 % du patrimoine est difficile à mobiliser rapidement (immobilier, objets).")
 			}

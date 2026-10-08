@@ -10,7 +10,7 @@ package money
 import (
 	"errors"
 	"fmt"
-	"math"
+	"math/big"
 	"strconv"
 	"strings"
 )
@@ -72,60 +72,54 @@ func (c Cents) Euros() int64 { return int64(c) / 100 }
 // String formate le montant en chaîne décimale à deux décimales (ex. "-12.05").
 // Aucune conversion en float n'est utilisée.
 func (c Cents) String() string {
-	neg := c < 0
-	v := int64(c)
-	if neg {
-		v = -v
+	v := new(big.Int).SetInt64(int64(c))
+	negative := v.Sign() < 0
+	v.Abs(v)
+	whole, frac := new(big.Int), new(big.Int)
+	whole.QuoRem(v, big.NewInt(100), frac)
+	result := fmt.Sprintf("%s.%02d", whole.String(), frac.Int64())
+	if negative {
+		return "-" + result
 	}
-	whole := v / 100
-	frac := v % 100
-	s := fmt.Sprintf("%d.%02d", whole, frac)
-	if neg {
-		return "-" + s
-	}
-	return s
+	return result
 }
 
 // Parse convertit une chaîne décimale ("123.45", "-0,50", "1000") en Cents,
 // sans passer par un float. Accepte le point ou la virgule comme séparateur.
-func Parse(s string) (Cents, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return 0, errors.New("money: chaîne vide")
+func Parse(s string) (Cents, error) { return ParseMinor(s, 2) }
+
+// ParseMinor parses an ISO minor-unit decimal exactly, rejecting overflow and
+// additional decimals rather than silently rounding an imported amount.
+func ParseMinor(s string, exponent int) (Cents, error) {
+	if exponent < 0 || exponent > 4 {
+		return 0, errors.New("money: invalid exponent")
 	}
-	s = strings.ReplaceAll(s, ",", ".")
-
-	neg := strings.HasPrefix(s, "-")
-	s = strings.TrimPrefix(s, "-")
-	s = strings.TrimPrefix(s, "+")
-
-	parts := strings.SplitN(s, ".", 2)
-	whole, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("money: partie entière invalide %q : %w", parts[0], err)
+	s = strings.ReplaceAll(strings.TrimSpace(s), ",", ".")
+	negative := strings.HasPrefix(s, "-")
+	s = strings.TrimPrefix(strings.TrimPrefix(s, "-"), "+")
+	parts := strings.Split(s, ".")
+	if len(parts) > 2 || parts[0] == "" {
+		return 0, errors.New("money: invalid decimal")
 	}
-
-	var frac int64
+	fraction := ""
 	if len(parts) == 2 {
-		f := parts[1]
-		switch {
-		case len(f) == 1:
-			f += "0"
-		case len(f) > 2:
-			return 0, fmt.Errorf("money: trop de décimales dans %q (max 2)", s)
-		}
-		frac, err = strconv.ParseInt(f, 10, 64)
-		if err != nil {
-			return 0, fmt.Errorf("money: partie décimale invalide %q : %w", parts[1], err)
+		fraction = parts[1]
+	}
+	if len(fraction) > exponent {
+		return 0, errors.New("money: too many decimals")
+	}
+	digits := parts[0] + fraction + strings.Repeat("0", exponent-len(fraction))
+	for _, c := range digits {
+		if c < '0' || c > '9' {
+			return 0, errors.New("money: invalid digit")
 		}
 	}
-
-	if whole > (math.MaxInt64-frac)/100 {
+	if negative {
+		digits = "-" + digits
+	}
+	v, e := strconv.ParseInt(digits, 10, 64)
+	if e != nil {
 		return 0, ErrOverflow
 	}
-	cents := whole*100 + frac
-	if neg {
-		cents = -cents
-	}
-	return Cents(cents), nil
+	return Cents(v), nil
 }

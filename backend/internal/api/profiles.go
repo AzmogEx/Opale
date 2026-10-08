@@ -40,14 +40,14 @@ func (s *Server) handleCreateProfile(w http.ResponseWriter, r *http.Request) {
 
 	hash, err := auth.HashPIN(req.PIN)
 	if err != nil {
-		s.log.Error("hash pin", "err", err)
+		s.log.Error("hash pin failed")
 		writeError(w, http.StatusInternalServerError, "internal", "erreur interne")
 		return
 	}
 
 	profile, err := s.store.CreateProfile(r.Context(), req.Name, hash, req.PrivacyDefault)
 	if err != nil {
-		s.log.Error("create profile", "err", err)
+		s.log.Error("create profile failed")
 		writeError(w, http.StatusInternalServerError, "internal", "création du profil impossible")
 		return
 	}
@@ -58,7 +58,7 @@ func (s *Server) handleCreateProfile(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListProfiles(w http.ResponseWriter, r *http.Request) {
 	profiles, err := s.store.ListProfiles(r.Context())
 	if err != nil {
-		s.log.Error("list profiles", "err", err)
+		s.log.Error("list profiles failed")
 		writeError(w, http.StatusInternalServerError, "internal", "erreur interne")
 		return
 	}
@@ -100,13 +100,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	token, err := auth.NewToken()
 	if err != nil {
-		s.log.Error("new token", "err", err)
+		s.log.Error("new token failed")
 		writeError(w, http.StatusInternalServerError, "internal", "erreur interne")
 		return
 	}
 	expiresAt := time.Now().Add(s.cfg.SessionTTL)
 	if err := s.store.CreateSession(r.Context(), req.ProfileID, auth.HashToken(token), expiresAt); err != nil {
-		s.log.Error("create session", "err", err)
+		s.log.Error("create session failed")
 		writeError(w, http.StatusInternalServerError, "internal", "erreur interne")
 		return
 	}
@@ -128,7 +128,10 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if token != "" {
-		_ = s.store.DeleteSession(r.Context(), auth.HashToken(token))
+		if err := s.store.DeleteSession(r.Context(), auth.HashToken(token)); err != nil {
+			s.storeErr(w, err, "logout")
+			return
+		}
 	}
 	writeJSON(w, http.StatusNoContent, nil)
 }

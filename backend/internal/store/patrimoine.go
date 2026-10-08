@@ -32,18 +32,11 @@ func (s *Store) ListAssets(ctx context.Context, profileID string) ([]Asset, erro
 	rows, err := s.pool.Query(ctx, `
 		SELECT a.id, a.profile_id, a.name, a.kind, a.currency, a.note, a.archived,
 		       a.created_at, a.updated_at, lv.value_cents,
-		       -- Solde théorique (audit) : dernière valorisation + mouvements
-		       -- postérieurs. Seulement pour les comptes de flux.
-		       CASE WHEN a.kind IN ('checking', 'savings') AND lv.value_cents IS NOT NULL
-		            THEN lv.value_cents + COALESCE((
-		                SELECT SUM(t.amount_cents) FROM transactions t
-		                WHERE t.asset_id = a.id AND t.occurred_on > lv.as_of
-		            ), 0)
-		       END AS theoretical_cents
+		       current_asset_value(a.profile_id,a.id) AS theoretical_cents
 		FROM assets a
 		LEFT JOIN LATERAL (
 			SELECT value_cents, as_of FROM valuations v
-			WHERE v.asset_id = a.id
+			WHERE v.asset_id = a.id AND v.profile_id=a.profile_id AND v.as_of<=CURRENT_DATE
 			ORDER BY v.as_of DESC, v.created_at DESC LIMIT 1
 		) lv ON true
 		WHERE a.profile_id = $1
@@ -110,14 +103,21 @@ func (s *Store) UpdateAsset(ctx context.Context, profileID, id, name, note strin
 
 // DeleteAsset supprime un actif (et ses valorisations, par cascade).
 func (s *Store) DeleteAsset(ctx context.Context, profileID, id string) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM assets WHERE id = $1 AND profile_id = $2`, id, profileID)
-	if err != nil {
-		return fmt.Errorf("DeleteAsset: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.Atomic(ctx, func(st *Store) error {
+		var found string
+		if err := st.pool.QueryRow(ctx, `SELECT id FROM assets WHERE id=$1 AND profile_id=$2 FOR UPDATE`, id, profileID).Scan(&found); err != nil {
+			return domainNotFound(err)
+		}
+		var history bool
+		if err := st.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM transactions WHERE profile_id=$1 AND asset_id=$2)`, profileID, id).Scan(&history); err != nil {
+			return err
+		}
+		if history {
+			return ErrHistoryRequired
+		}
+		_, err := st.pool.Exec(ctx, `DELETE FROM assets WHERE id=$1 AND profile_id=$2`, id, profileID)
+		return err
+	})
 }
 
 // ─── Passifs ─────────────────────────────────────────────────────────────────
@@ -141,11 +141,11 @@ func (s *Store) CreateLiability(ctx context.Context, profileID, name, kind, curr
 func (s *Store) ListLiabilities(ctx context.Context, profileID string) ([]Liability, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT l.id, l.profile_id, l.name, l.kind, l.currency, l.note, l.archived,
-		       l.created_at, l.updated_at, lv.value_cents
+		       l.created_at, l.updated_at,CASE WHEN lv.value_cents IS NULL THEN NULL ELSE current_liability_value(l.profile_id,l.id) END
 		FROM liabilities l
 		LEFT JOIN LATERAL (
 			SELECT value_cents FROM valuations v
-			WHERE v.liability_id = l.id
+			WHERE v.liability_id = l.id AND v.profile_id=l.profile_id AND v.as_of<=CURRENT_DATE
 			ORDER BY v.as_of DESC, v.created_at DESC LIMIT 1
 		) lv ON true
 		WHERE l.profile_id = $1
@@ -231,11 +231,23 @@ func (s *Store) AddAssetValuation(ctx context.Context, profileID, assetID string
 
 // AddLiabilityValuation ajoute une valorisation à un passif (vérifie l'appartenance).
 func (s *Store) AddLiabilityValuation(ctx context.Context, profileID, liabilityID string, value money.Cents, asOf time.Time, note string) (Valuation, error) {
-	return s.addValuation(ctx, `
+	var result Valuation
+	err := s.Atomic(ctx, func(st *Store) error {
+		if e := st.lockLiability(ctx, profileID, liabilityID); e != nil {
+			return e
+		}
+		var e error
+		result, e = st.addValuation(ctx, `
 		INSERT INTO valuations (profile_id, liability_id, value_cents, as_of, note)
 		SELECT $1, l.id, $3, $4, $5 FROM liabilities l WHERE l.id = $2 AND l.profile_id = $1
 		RETURNING id, profile_id, asset_id, liability_id, value_cents, as_of, note, created_at`,
-		profileID, liabilityID, value, asOf, note)
+			profileID, liabilityID, value, asOf, note)
+		if e != nil {
+			return e
+		}
+		return st.validateLiabilityHistory(ctx, profileID, liabilityID)
+	})
+	return result, err
 }
 
 func (s *Store) addValuation(ctx context.Context, query, profileID, subjectID string, value money.Cents, asOf time.Time, note string) (Valuation, error) {

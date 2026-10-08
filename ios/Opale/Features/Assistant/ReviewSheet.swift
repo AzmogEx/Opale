@@ -6,6 +6,7 @@ struct ReviewSheet: View {
     @Environment(SessionStore.self) private var session
     @Environment(\.dismiss) private var dismiss
 
+    @State private var allowCloud = false
     @State private var review: MonthlyReview?
     @State private var errorMessage: String?
     // Décalage en mois par rapport au mois précédent (0 = mois dernier).
@@ -14,6 +15,13 @@ struct ReviewSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                if case .loggedIn(let profile) = session.state, profile.privacyDefault == "N2" {
+                    Section("Autorisation pour ce bilan") {
+                        Toggle("Autoriser le cloud pour cette demande", isOn: $allowCloud)
+                        Text("Seuls des agrégats arrondis et minimisés peuvent être envoyés si le serveur le permet. Aucun document ni libellé personnel. Les chiffres restent calculés par le moteur.").font(.caption)
+                        Button("Actualiser le bilan") { Task { await load() } }
+                    }
+                }
                 if let review {
                     Section {
                         monthHeader(review)
@@ -48,6 +56,7 @@ struct ReviewSheet: View {
 
                     Section {
                         Text(review.narrative)
+                            .sensitive()
                             .font(.subheadline)
                     } header: {
                         Text("Le bilan")
@@ -106,24 +115,29 @@ struct ReviewSheet: View {
         var comps = DateComponents()
         comps.year = review.year
         comps.month = review.month
-        let date = Calendar.current.date(from: comps) ?? .now
-        return date.formatted(.dateTime.month(.wide).year()).capitalized
+        let date = Calendar.opale.date(from: comps) ?? .now
+        return date.opaleFormatted(.dateTime.month(.wide).year()).capitalized
     }
 
     private func tierFooter(_ tier: String) -> String {
         switch tier {
         case "n2": "Bilan rédigé sur ton homelab — les données ne l'ont jamais quitté."
-        case "n3": "Bilan rédigé par le modèle cloud à partir de données anonymisées."
+        case "n3": "Bilan rédigé par le modèle cloud à partir de données minimisées."
         default: "Bilan gabarit du moteur — l'IA est hors ligne."
         }
     }
 
     private func load() async {
         // Mois cible : (mois courant − 1) + décalage choisi.
-        let target = Calendar.current.date(byAdding: .month, value: -1 + monthOffset, to: .now) ?? .now
-        let comps = Calendar.current.dateComponents([.year, .month], from: target)
+        let target = Calendar.opale.date(byAdding: .month, value: -1 + monthOffset, to: .now) ?? .now
+        let comps = Calendar.opale.dateComponents([.year, .month], from: target)
+        let consent = allowCloud
+        allowCloud = false
+        review = nil
         do {
-            review = try await session.api.monthlyReview(year: comps.year, month: comps.month)
+            let value = try await session.api.monthlyReview(year: comps.year, month: comps.month, allowCloud: consent)
+            guard !Task.isCancelled else { return }
+            review = value
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"math/big"
 	"sort"
 	"time"
 
@@ -16,9 +17,9 @@ type UpcomingFlow struct {
 
 // CashProjection — cash disponible projeté à une date (EF-027).
 type CashProjection struct {
-	StartCash Cents_       `json:"start_cash_cents"`
-	EndCash   Cents_       `json:"end_cash_cents"`
-	Until     time.Time    `json:"until"`
+	StartCash Cents_         `json:"start_cash_cents"`
+	EndCash   Cents_         `json:"end_cash_cents"`
+	Until     time.Time      `json:"until"`
 	Upcoming  []UpcomingFlow `json:"upcoming"`
 }
 
@@ -35,18 +36,24 @@ func ProjectCash(
 	recurring []RecurringFlow,
 	today, until time.Time,
 	dailyVariableSpend money.Cents,
-) CashProjection {
+) (CashProjection, error) {
 	if until.Before(today) {
 		until = today
 	}
+	if until.After(today.AddDate(100, 0, 0)) || dailyVariableSpend < 0 {
+		return CashProjection{}, ErrInvalidInput
+	}
 
 	// Énumération des occurrences de chaque flux actif dans la fenêtre.
-	var upcoming []UpcomingFlow
+	upcoming := []UpcomingFlow{}
 	for _, f := range recurring {
 		if !f.Active || f.IntervalDays <= 0 {
 			continue
 		}
 		next := f.NextDate
+		if next.Before(today.AddDate(-100, 0, 0)) || f.IntervalDays > 36600 {
+			return CashProjection{}, ErrInvalidInput
+		}
 		// Rattrapage : si l'échéance est légèrement passée mais le flux actif,
 		// on la compte à aujourd'hui.
 		for next.Before(today) {
@@ -59,21 +66,24 @@ func ProjectCash(
 	}
 	sort.Slice(upcoming, func(i, j int) bool { return upcoming[i].Date.Before(upcoming[j].Date) })
 
-	end := int64(startCash)
+	end := big.NewInt(int64(startCash))
 	for _, u := range upcoming {
-		end += int64(u.Amount)
+		end.Add(end, big.NewInt(int64(u.Amount)))
 	}
 
 	// Dépenses variables moyennes sur la période.
 	days := int64(until.Sub(today).Hours() / 24)
 	if days > 0 && dailyVariableSpend > 0 {
-		end -= days * int64(dailyVariableSpend)
+		end.Sub(end, new(big.Int).Mul(big.NewInt(days), big.NewInt(int64(dailyVariableSpend))))
+	}
+	if !end.IsInt64() {
+		return CashProjection{}, money.ErrOverflow
 	}
 
 	return CashProjection{
 		StartCash: startCash,
-		EndCash:   money.Cents(end),
+		EndCash:   money.Cents(end.Int64()),
 		Until:     until,
 		Upcoming:  upcoming,
-	}
+	}, nil
 }

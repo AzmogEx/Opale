@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/opale-app/opale/internal/money"
@@ -61,10 +62,12 @@ type Valuation struct {
 // NetWorth — résultat du calcul de patrimoine net (CA-1). Tous les montants en
 // centimes ; calcul déterministe (jamais produit par l'IA — EIA-040/041).
 type NetWorth struct {
-	AssetsTotal      money.Cents `json:"assets_total_cents"`
-	LiabilitiesTotal money.Cents `json:"liabilities_total_cents"`
-	Net              money.Cents `json:"net_cents"`
-	Currency         string      `json:"currency"`
+	Complete          bool        `json:"complete"`
+	MissingValuations int         `json:"missing_valuations"`
+	AssetsTotal       money.Cents `json:"assets_total_cents"`
+	LiabilitiesTotal  money.Cents `json:"liabilities_total_cents"`
+	Net               money.Cents `json:"net_cents"`
+	Currency          string      `json:"currency"`
 }
 
 // AssetKinds et LiabilityKinds : valeurs autorisées (doivent rester alignées
@@ -77,4 +80,30 @@ var AssetKinds = map[string]bool{
 
 var LiabilityKinds = map[string]bool{
 	"mortgage": true, "auto_loan": true, "consumer_loan": true, "other": true,
+}
+
+func CurrencyExponent(code string) int {
+	switch code {
+	case "JPY", "KRW", "CLP", "VND", "XAF", "XOF", "XPF", "BIF", "DJF", "GNF", "ISK", "KMF", "PYG", "RWF", "UGX", "VUV":
+		return 0
+	case "BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND":
+		return 3
+	case "CLF", "UYW":
+		return 4
+	}
+	return 2
+}
+func (a Asset) MarshalJSON() ([]byte, error) {
+	type raw Asset
+	return json.Marshal(struct {
+		raw
+		Exponent int `json:"currency_exponent"`
+	}{raw(a), CurrencyExponent(a.Currency)})
+}
+func (a Liability) MarshalJSON() ([]byte, error) {
+	type raw Liability
+	return json.Marshal(struct {
+		raw
+		Exponent int `json:"currency_exponent"`
+	}{raw(a), CurrencyExponent(a.Currency)})
 }

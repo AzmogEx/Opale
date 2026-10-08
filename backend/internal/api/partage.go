@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -89,7 +90,7 @@ func (s *Server) handleSpaceDetail(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAddSpaceMember(w http.ResponseWriter, r *http.Request) {
 	spaceID := chi.URLParam(r, "id")
-	if !s.requireSpaceMember(w, r, spaceID) {
+	if !s.requireSpaceOwner(w, r, spaceID) {
 		return
 	}
 	var req struct {
@@ -112,15 +113,28 @@ func (s *Server) handleAddSpaceMember(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRemoveSpaceMember(w http.ResponseWriter, r *http.Request) {
-	spaceID := chi.URLParam(r, "id")
-	if !s.requireSpaceMember(w, r, spaceID) {
+	id, target := chi.URLParam(r, "id"), chi.URLParam(r, "profileID")
+	if target == profileFromContext(r.Context()).ID {
+		if !s.requireSpaceMember(w, r, id) {
+			return
+		}
+	} else if !s.requireSpaceOwner(w, r, id) {
 		return
 	}
-	if err := s.store.RemoveSpaceMember(r.Context(), spaceID, chi.URLParam(r, "profileID")); err != nil {
-		s.storeErr(w, err, "remove member")
+	owner, e := s.store.IsSpaceOwner(r.Context(), id, target)
+	if e != nil {
+		s.storeErr(w, e, "space owner")
 		return
 	}
-	writeJSON(w, http.StatusNoContent, nil)
+	if owner {
+		writeError(w, 409, "owner_required", "Le propriétaire doit conserver son accès à l’espace")
+		return
+	}
+	if e = s.store.RemoveSpaceMember(r.Context(), id, target); e != nil {
+		s.storeErr(w, e, "remove member")
+		return
+	}
+	writeJSON(w, 204, nil)
 }
 
 // handleSetTransactionSpace marque/démarque une dépense commune.
@@ -149,14 +163,14 @@ func (s *Server) handleSetTransactionSpace(w http.ResponseWriter, r *http.Reques
 var currencyRe = regexp.MustCompile(`^[A-Z]{3}$`)
 
 func (s *Server) handleListFX(w http.ResponseWriter, r *http.Request) {
-	rates, unrated, err := s.store.ListFXRates(r.Context())
+	rates, unrated, err := s.store.ListFXRates(r.Context(), profileFromContext(r.Context()).ID)
 	if err != nil {
 		s.storeErr(w, err, "list fx")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"rates":   rates,
-		"unrated": unrated, // devises en usage comptées 1:1 faute de taux
+		"unrated": unrated, // devises sans taux : calcul bloqué
 	})
 }
 
@@ -168,14 +182,22 @@ func (s *Server) handleUpsertFX(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		RateMicro int64 `json:"rate_micro"` // 1 unité = N micro-euros
+		AsOf      string `json:"as_of"`
+		RateMicro int64  `json:"rate_micro"` // 1 unité = N micro-euros
 	}
 	if err := decodeJSON(r, &req); err != nil || req.RateMicro <= 0 {
 		writeError(w, http.StatusBadRequest, "invalid_body",
 			"rate_micro (> 0, micro-euros par unité) est requis — ex. 1 USD = 0,92 € → 920000")
 		return
 	}
-	rate, err := s.store.UpsertFXRate(r.Context(), currency, req.RateMicro)
+	if req.AsOf == "" {
+		req.AsOf = parisToday().Format(dayLayout)
+	}
+	if d, e := time.Parse(dayLayout, req.AsOf); e != nil || d.After(parisToday()) {
+		writeError(w, 400, "invalid_date", "Date de taux invalide ou future")
+		return
+	}
+	rate, err := s.store.UpsertProfileFX(r.Context(), profileFromContext(r.Context()).ID, currency, req.AsOf, req.RateMicro)
 	if err != nil {
 		s.storeErr(w, err, "upsert fx")
 		return
@@ -185,9 +207,22 @@ func (s *Server) handleUpsertFX(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteFX(w http.ResponseWriter, r *http.Request) {
 	currency := strings.ToUpper(chi.URLParam(r, "currency"))
-	if err := s.store.DeleteFXRate(r.Context(), currency); err != nil {
+	if err := s.store.DeleteProfileFX(r.Context(), profileFromContext(r.Context()).ID, currency); err != nil {
 		s.storeErr(w, err, "delete fx")
 		return
 	}
 	writeJSON(w, http.StatusNoContent, nil)
+}
+
+func (s *Server) requireSpaceOwner(w http.ResponseWriter, r *http.Request, id string) bool {
+	ok, err := s.store.IsSpaceOwner(r.Context(), id, profileFromContext(r.Context()).ID)
+	if err != nil {
+		s.storeErr(w, err, "space owner")
+		return false
+	}
+	if !ok {
+		writeError(w, 404, "not_found", "espace indisponible")
+		return false
+	}
+	return true
 }

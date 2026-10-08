@@ -1,0 +1,6 @@
+# HTTPS automatique : domaine DNS public pointant vers cet hôte, ports 80/443 accessibles.
+{$OPALE_DOMAIN} {
+    encode zstd gzip
+    header Strict-Transport-Security "max-age=31536000"
+    reverse_proxy web:80
+}

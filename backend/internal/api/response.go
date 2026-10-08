@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 )
 
@@ -33,7 +35,13 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 // decodeJSON lit le corps JSON d'une requête dans dst, en refusant les champs
 // inconnus.
 func decodeJSON(r *http.Request, dst any) error {
-	dec := json.NewDecoder(r.Body)
+	dec := json.NewDecoder(io.LimitReader(r.Body, 15<<20))
 	dec.DisallowUnknownFields()
-	return dec.Decode(dst)
+	if e := dec.Decode(dst); e != nil {
+		return e
+	}
+	if e := dec.Decode(new(any)); e != io.EOF {
+		return errors.New("un seul objet JSON de 15 Mio maximum est accepté")
+	}
+	return nil
 }

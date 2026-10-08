@@ -1,7 +1,7 @@
 // Package ai est l'AI ROUTER d'Opale (EIA-010) : il route chaque demande
 // d'explication vers le bon niveau de la cascade —
 //
-//	N2 homelab (Ollama, privé)  →  N3 cloud (Fable 5, données anonymisées)
+//	N2 homelab (Ollama, privé)  →  N3 cloud (Fable 5, données structurées minimisées)
 //
 // (le niveau N1 vit sur l'iPhone, côté app.)
 //
@@ -15,6 +15,7 @@ package ai
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 )
@@ -22,7 +23,7 @@ import (
 // Tiers de la cascade.
 const (
 	TierHomelab = "n2" // Ollama sur le homelab — données complètes, privées
-	TierCloud   = "n3" // Fable 5 — uniquement des données anonymisées
+	TierCloud   = "n3" // Fable 5 — uniquement des données structurées minimisées
 	TierNone    = ""   // aucun provider : repli déterministe
 )
 
@@ -34,11 +35,9 @@ type Request struct {
 	// Task : étiquette courte pour la journalisation (EIA-012).
 	Task string
 	// System : cadrage (règles, ton). Prompt : contexte chiffré + question.
-	System string
-	Prompt string
-	// AnonymizedPrompt : variante N2-safe du prompt (EIA-031/033). Si vide,
-	// la demande est interdite de cloud (EIA-032).
-	AnonymizedPrompt string
+	System     string
+	Prompt     string
+	CloudFacts *CloudFacts
 	// AllowCloud : l'utilisateur a consenti à l'envoi cloud (EIA-022).
 	AllowCloud bool
 	// MaxTokens : borne de la réponse (défaut raisonnable si 0).
@@ -99,18 +98,19 @@ func (r *Router) Explain(ctx context.Context, req Request) (Response, error) {
 			r.logRoute(req.Task, TierHomelab, "homelab disponible", start)
 			return Response{Text: text, Tier: TierHomelab, Provider: r.homelab.Name()}, nil
 		}
-		r.log.Warn("ai: échec homelab, cascade vers le cloud", "task", req.Task, "err", err)
+		r.log.Warn("ai: échec homelab, cascade vers le cloud", "task", req.Task, "error_type", fmt.Sprintf("%T", err))
 	}
 
-	// ── N3 : cloud — seulement anonymisé ET consenti (EIA-022/031). ───────
-	if r.cloud != nil && req.AllowCloud && req.AnonymizedPrompt != "" {
+	// ── N3 : cloud — seulement minimisé ET consenti (EIA-022/031). ───────
+	cloudPrompt, cloudErr := req.CloudFacts.Prompt()
+	if r.cloud != nil && req.AllowCloud && cloudErr == nil {
 		start := time.Now()
-		text, err := r.cloud.Generate(ctx, req.System, req.AnonymizedPrompt, req.MaxTokens)
+		text, err := r.cloud.Generate(ctx, req.System, cloudPrompt, req.MaxTokens)
 		if err == nil {
-			r.logRoute(req.Task, TierCloud, "homelab indisponible, cloud consenti et anonymisé", start)
+			r.logRoute(req.Task, TierCloud, "homelab indisponible, cloud consenti et minimisé", start)
 			return Response{Text: text, Tier: TierCloud, Provider: r.cloud.Name()}, nil
 		}
-		r.log.Warn("ai: échec cloud", "task", req.Task, "err", err)
+		r.log.Warn("ai: échec cloud", "task", req.Task, "error_type", fmt.Sprintf("%T", err))
 	}
 
 	r.log.Info("ai: repli déterministe", "task", req.Task,

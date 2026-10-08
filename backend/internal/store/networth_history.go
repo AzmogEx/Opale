@@ -46,25 +46,15 @@ func (s *Store) ComputeNetWorthHistory(ctx context.Context, profileID string, mo
 		)
 		SELECT
 			p.as_of,
-			COALESCE((
-				SELECT SUM(lv.value_cents) FROM (
-					SELECT DISTINCT ON (v.asset_id)
-					       v.value_cents * COALESCE(fx.rate_micro, 1000000) / 1000000 AS value_cents
-					FROM valuations v
-					JOIN assets a ON a.id = v.asset_id
-					LEFT JOIN fx_rates fx ON fx.currency = a.currency
-					WHERE v.profile_id = $1 AND a.archived = false AND v.as_of <= p.as_of
-					ORDER BY v.asset_id, v.as_of DESC, v.created_at DESC
-				) lv
-			), 0) AS assets_cents,
+			COALESCE((SELECT SUM(amount_eur(current_asset_value(a.profile_id,a.id,p.as_of),a.currency,p.as_of,a.profile_id)) FROM assets a WHERE a.profile_id=$1 AND (a.archived_at IS NULL OR a.archived_at>p.as_of) AND (EXISTS(SELECT 1 FROM valuations v WHERE v.profile_id=a.profile_id AND v.asset_id=a.id AND v.as_of<=p.as_of) OR EXISTS(SELECT 1 FROM transactions t WHERE t.profile_id=a.profile_id AND t.asset_id=a.id AND t.occurred_on<=p.as_of))),0) AS assets_cents,
 			COALESCE((
 				SELECT SUM(lv.value_cents) FROM (
 					SELECT DISTINCT ON (v.liability_id)
-					       v.value_cents * COALESCE(fx.rate_micro, 1000000) / 1000000 AS value_cents
+					       amount_eur(current_liability_value(l.profile_id,l.id,p.as_of),l.currency,p.as_of,l.profile_id) AS value_cents
 					FROM valuations v
 					JOIN liabilities l ON l.id = v.liability_id
-					LEFT JOIN fx_rates fx ON fx.currency = l.currency
-					WHERE v.profile_id = $1 AND l.archived = false AND v.as_of <= p.as_of
+
+					WHERE v.profile_id = $1 AND (l.archived_at IS NULL OR l.archived_at>p.as_of) AND v.as_of <= p.as_of
 					ORDER BY v.liability_id, v.as_of DESC, v.created_at DESC
 				) lv
 			), 0) AS liabilities_cents

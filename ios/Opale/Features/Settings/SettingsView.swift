@@ -7,6 +7,8 @@ struct SettingsView: View {
 	@Environment(AppLock.self) private var lock
 	@Environment(\.dismiss) private var dismiss
 
+	@AppStorage("appearance.mode") private var appearanceMode = "system"
+	@AppStorage("appearance.accent") private var accentColor = "opale"
 	@State private var status: AssistantStatus?
 	@State private var bankStatus: BankStatus?
 
@@ -27,6 +29,14 @@ struct SettingsView: View {
 	var body: some View {
 		NavigationStack {
 			Form {
+                Section("Outils") {
+                    NavigationLink { PilotToolsView() } label: { Label("Pilote automatique", systemImage: "sparkles") }
+                    NavigationLink { PushSettingsView() } label: { Label("Notifications", systemImage: "bell") }
+                }
+                Section("Apparence") {
+                    Picker("Thème", selection: $appearanceMode) { Text("Système").tag("system"); Text("Clair").tag("light"); Text("Sombre").tag("dark") }
+                    Picker("Accent", selection: $accentColor) { Text("Opale").tag("opale"); Text("Bleu").tag("blue"); Text("Violet").tag("purple"); Text("Orange").tag("orange") }
+                }
 				profileSection
 				securitySection
 				privacySection
@@ -61,6 +71,7 @@ struct SettingsView: View {
 			.sheet(item: $exportedFileURL) { url in
 				ExportShareSheet(fileURL: url)
 					.presentationDetents([.medium])
+                    .onDisappear { try? FileManager.default.removeItem(at: url) }
 			}
 			.alert("Réinitialiser les données ?", isPresented: $confirmReset) {
 				TextField("Tape « \(session.profileName) » pour confirmer", text: $typedName)
@@ -84,6 +95,7 @@ struct SettingsView: View {
 	private var profileSection: some View {
 		Section("Profil") {
 			LabeledContent("Connecté en tant que", value: session.profileName)
+                NavigationLink("Modifier le profil / confidentialité") { ProfileSettingsView() }
 		}
 	}
 
@@ -97,7 +109,7 @@ struct SettingsView: View {
 			)) {
 				VStack(alignment: .leading, spacing: 2) {
 					Text("Verrouillage \(lock.biometryLabel)")
-					Text("Se verrouille en quittant l'app (retour à l'écran d'accueil)")
+					Text("Au démarrage, en quittant l’app et après cinq minutes sans interaction")
 						.font(.caption)
 						.foregroundStyle(.secondary)
 				}
@@ -156,7 +168,7 @@ struct SettingsView: View {
 						.foregroundStyle(status.homelabAvailable ? OpaleTheme.gain : .secondary)
 						.font(.subheadline)
 				}
-				LabeledContent("IA cloud (N3, anonymisé)") {
+				LabeledContent("IA cloud (N3, minimisé)") {
 					Text(status.cloudConfigured ? "Configurée" : "Non configurée")
 						.font(.subheadline)
 						.foregroundStyle(status.cloudConfigured ? OpaleTheme.accent : .secondary)
@@ -252,7 +264,7 @@ struct SettingsView: View {
 			let data = try await session.api.exportData()
 			let url = FileManager.default.temporaryDirectory
 				.appendingPathComponent("opale-export.zip")
-			try data.write(to: url)
+			try data.write(to: url, options: [.atomic, .completeFileProtection])
 			exportedFileURL = url
 		} catch {
 			feedback = "Export impossible : \(error.localizedDescription)"
@@ -266,6 +278,9 @@ struct SettingsView: View {
 		}
 		do {
 			try await session.api.resetData(confirmName: typedName)
+            DiskCache.clear()
+            WidgetBridge.clear()
+            session.changed()
 			feedback = ""
 			typedName = ""
 			dismiss() // l'Accueil se recharge à vide

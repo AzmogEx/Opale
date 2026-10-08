@@ -1,138 +1,63 @@
 # Opale
 
-Application de **gestion de patrimoine** — *belle, intelligente et
-privée*, auto-hébergée.
+Gestion de patrimoine personnelle, auto-hébergée : API Go/PostgreSQL, application iOS SwiftUI et web SvelteKit. Les cinq espaces sont **Accueil, Flux, Patrimoine, Projection, Assistant**. Le moteur réalise les calculs ; l’IA facultative commente des faits contrôlés.
 
-> Documents de référence : [`CAHIER-DES-CHARGES.md`](CAHIER-DES-CHARGES.md) ·
-> [`CONCEPTION.md`](CONCEPTION.md) · [`docs/DATA-MODEL.md`](docs/DATA-MODEL.md)
+## Démarrer
 
-## État d'avancement
-
-| Palier | Contenu | Statut |
-|---|---|---|
-| **P0 — Fondations** | Repo, backend Go + Postgres, modèle de données, auth profils, CI/CD | 🟢 en cours (ce socle) |
-| P1 — Patrimoine net | Accueil, saisie actifs/dettes, graphe, design system | ⚪ à venir |
-| P2 → P7 | Projection, flux, pilotage, cerveau IA, profondeur, confort | ⚪ à venir |
-
-### Ce qui est posé (P0)
-
-- **Backend Go** (`backend/`) : API REST, logs structurés, arrêt gracieux.
-- **PostgreSQL** : modèle de données du cœur patrimoine (profils, actifs, passifs,
-  valorisations) + migrations embarquées appliquées au démarrage.
-- **Moteur monétaire** (`internal/money`) : montants en **centimes entiers**
-  (règle d'or ENF-007), testé unitairement (CA-2).
-- **Auth multi-profil** : profils cloisonnés, code (PIN) haché bcrypt, sessions
-  par jeton opaque (EF-001/002).
-- **Patrimoine net** : calcul déterministe actifs − passifs (CA-1).
-- **CI** GitHub Actions + **Docker / docker-compose** pour le homelab.
-
-## Architecture
-
-```
-iOS SwiftUI (à venir)   Web (à venir)
-            \           /
-          API REST (Go) ── Backend Go + PostgreSQL ── Moteur financier déterministe
-                                  │
-                            AI Router (P5) ── iPhone / Homelab GPU / Cloud
-```
-
-Stack tranchée : **iOS SwiftUI**, **backend Go**, **PostgreSQL**, IA hybride en
-cascade (paliers ultérieurs). Framework web encore ouvert (React/Svelte).
-
-## Structure du dépôt
-
-```
-.
-├── backend/                  # API Go
-│   ├── cmd/api/              # point d'entrée
-│   └── internal/
-│       ├── config/           # configuration (env)
-│       ├── money/            # type monétaire (centimes) + tests
-│       ├── migrations/       # SQL embarqué
-│       ├── store/            # accès PostgreSQL (pool, migrations, requêtes)
-│       ├── auth/             # hachage PIN + jetons de session
-│       └── api/              # serveur HTTP, middlewares, handlers
-├── docs/DATA-MODEL.md        # modèle de données détaillé
-├── docker-compose.yml        # Postgres + API (dev / homelab)
-├── Makefile                  # raccourcis (make help)
-└── .github/workflows/ci.yml  # CI
-```
-
-## Démarrage rapide
-
-Prérequis : **Go 1.26+**, **Docker**.
+Prérequis : Docker + Compose v2. Copier `.env.example` en `.env`, choisir un mot de passe de base unique ; configurer et sauvegarder séparément `OPALE_VAULT_KEY` pour activer le coffre.
 
 ```bash
-cp .env.example .env          # ajuster si besoin
-
-# Option A — tout via Docker
-make up                       # db + api sur http://localhost:8080
-
-# Option B — Postgres en Docker, API en local
-make db                       # démarre PostgreSQL
-make run                      # lance l'API (applique les migrations au démarrage)
+cp .env.example .env
+# Modifier .env avant le lancement
+docker compose up -d --build --wait
+curl --fail http://127.0.0.1:3000/readyz
 ```
 
-Vérifier :
+Ouvrir [Opale local](http://127.0.0.1:3000), créer un profil et choisir son code personnel. Les ports sont limités à la boucle locale. Pour un accès externe, mettre le web derrière un reverse proxy HTTPS ; voir [exploitation](docs/EXPLOITATION.md).
+
+En développement natif : Go 1.26+, PostgreSQL17, Node22. `make db` démarre PostgreSQL ; charger les variables de `.env` dans l’environnement du terminal avant `make run`. Dans `web/`, `npm ci` puis `npm run dev`. Vite proxifie vers `http://localhost:8080` ; `OPALE_API_URL` permet de cibler une API de test. Pour iOS, générer le projet avec `xcodegen generate --spec ios/project.yml`, puis ouvrir `ios/Opale.xcodeproj` dans Xcode26.
+
+## Fonctionnalités
+
+| Espace | Parcours disponibles |
+|---|---|
+| Accueil | Patrimoine net et historique, trésorerie, indicateurs, alertes, jalons |
+| Flux | Saisie/correction/suppression, virements atomiques, capital remboursé lié à une dette, imports CSV/OFX, pagination/filtres, catégories/règles, budgets, récurrences/calendrier, partage explicite, Wrapped |
+| Patrimoine | Actifs/dettes/valorisations, devises, immobilier, investissements et flux, objets, société/CCA, coffre chiffré, contacts/transmission, banque et cotations facultatives |
+| Projection | FIRE, inflation, objectifs, scénarios comparés, arbitrages achat/location et crédit/investissement, crédits, fiscalité/PER documentés |
+| Assistant | Conversation, états de calcul et sources, bilan mensuel, jumeau patrimonial, cloud avec consentement explicite lorsque autorisé |
+
+Les intégrations banque, IA externe, cotations et APNs nécessitent configuration et recette avec leur fournisseur. Le code et ses tests ne prouvent pas la réception d’une notification sur appareil réel ou la synchronisation d’un compte bancaire réel. Les limites sont détaillées dans les documents de livraison.
+
+## Données et confidentialité
+
+Les champs API historiques `*_cents` contiennent des **unités mineures entières** : EUR/USD deux décimales, JPY zéro, KWD trois. Les totaux agrégés sont convertis en EUR ; les montants individuels conservent leur devise. Les données sont cloisonnées par profil, avec partage explicite. Le coffre utilise AES-256-GCM. La clé ne réside pas dans le dump de base et doit être conservée séparément.
+
+Le web conserve le jeton uniquement pendant la session d’onglet, verrouille à froid et après inactivité, et retire les données visibles en mode discret. Il n’offre pas d’édition hors ligne. L’IA cloud ne reçoit pas de question libre ou d’historique complet ; elle utilise des intentions et faits minimisés sélectionnés par le serveur. La minimisation ne garantit pas une anonymisation absolue.
+
+## Vérifier
 
 ```bash
-curl localhost:8080/healthz   # {"status":"ok"}
-curl localhost:8080/readyz    # {"status":"ready"} si la base répond
+make test
+make vet
+cd web
+npm ci
+npm run check
+npm test
+npm run build
+# Avec le serveur Vite démarré dans un autre terminal :
+npx playwright install chromium
+npm run test:e2e
 ```
 
-Commandes utiles : `make help` · `make test` · `make vet` · `make ci`.
+`npm run test:e2e:integration` nécessite une **API et une base jetables** derrière le proxy Vite (coffre configuré) ; ces tests créent puis suppriment leurs profils. Ne jamais utiliser une instance personnelle. Le workflow CI configure Go/race avec PostgreSQL, Svelte/check/build, tests navigateur et pile Compose, sauvegarde/restauration isolée, tests unitaires iOS sur simulateur signé localement. Son exécution distante n’a pas été réalisée pendant cette livraison ; les vérifications locales et leurs limites figurent dans la recette.
 
-## API (P0)
+## Documents et organisation
 
-Toutes les réponses sont en JSON. Les montants sont exprimés en **centimes**
-(champs `*_cents`).
+- [Matrice complète de livraison](docs/LIVRAISON.md), [recette reproductible](docs/RECETTE.md), [conventions financières](docs/CONVENTIONS-FINANCIERES.md), [confidentialité IA](docs/CONFIDENTIALITE-IA.md).
+- [Cahier des charges](docs/CAHIER-DES-CHARGES.md), [conception](docs/CONCEPTION.md), [modèle de données](docs/DATA-MODEL.md).
+- [Livraison web et preuves](web/DELIVERY.md), [livraison iOS et preuves](ios/DELIVERY.md), [livraison backend](docs/DELIVERY-BACKEND.md), [guide web](web/README.md).
+- [Installation, migration, sauvegarde, restauration, secrets et supervision](docs/EXPLOITATION.md).
+- `backend/` : API et moteur déterministe ; `web/` : SPA ; `ios/` : SwiftUI ; `scripts/` : exploitation ; `.github/workflows/ci.yml` : vérifications.
 
-### Public
-
-| Méthode | Route | Rôle |
-|---|---|---|
-| `GET` | `/healthz`, `/readyz` | Sondes liveness / readiness |
-| `GET` | `/v1/profiles` | Liste des profils (écran de sélection) |
-| `POST` | `/v1/profiles` | Créer un profil `{name, pin, privacy_default?}` |
-| `POST` | `/v1/auth/login` | Connexion `{profile_id, pin}` → `{token, expires_at, profile}` |
-
-### Authentifié (`Authorization: Bearer <token>` ou `X-Session-Token: <token>`)
-
-| Méthode | Route | Rôle |
-|---|---|---|
-| `POST` | `/v1/auth/logout` | Révoque la session |
-| `GET` | `/v1/me` | Profil courant |
-| `GET` | `/v1/net-worth` | Patrimoine net (actifs − passifs) |
-| `GET/POST` | `/v1/assets` | Lister / créer un actif |
-| `GET/PATCH/DELETE` | `/v1/assets/{id}` | Détail / mise à jour / suppression |
-| `GET/POST` | `/v1/assets/{id}/valuations` | Historique / ajout de valorisation |
-| `GET/POST` | `/v1/liabilities` | Lister / créer un passif |
-| `GET/PATCH/DELETE` | `/v1/liabilities/{id}` | Détail / mise à jour / suppression |
-| `GET/POST` | `/v1/liabilities/{id}/valuations` | Historique / ajout de valorisation |
-
-### Exemple
-
-```bash
-# Créer un profil
-curl -s localhost:8080/v1/profiles -d '{"name":"Adam","pin":"1234"}'
-
-# Se connecter
-TOKEN=$(curl -s localhost:8080/v1/auth/login \
-  -d '{"profile_id":"<id>","pin":"1234"}' | jq -r .token)
-
-# Ajouter un actif puis sa valorisation (120 000,00 €)
-AID=$(curl -s localhost:8080/v1/assets -H "Authorization: Bearer $TOKEN" \
-  -d '{"name":"Livret A","kind":"savings"}' | jq -r .id)
-curl -s localhost:8080/v1/assets/$AID/valuations -H "Authorization: Bearer $TOKEN" \
-  -d '{"value_cents":12000000,"as_of":"2026-06-15"}'
-
-# Patrimoine net
-curl -s localhost:8080/v1/net-worth -H "Authorization: Bearer $TOKEN"
-```
-
-## Principes non négociables
-
-- **Argent en centimes entiers** — jamais de float (ENF-007).
-- **Calculs déterministes** dans le moteur, jamais par l'IA (EIA-040/041).
-- **Données privées par profil** ; confidentialité N1/N2/N3 (à venir, P5).
-- **Secrets hors code** — variables d'environnement (`.env`, jamais committé).
+Sauvegarder avec `./scripts/backup.sh /chemin/protege`. Restaurer exclusivement vers une nouvelle base avec `./scripts/restore.sh fichier.dump nouvelle_base`. Tester périodiquement un téléchargement de document après restauration avec la même clé de coffre.

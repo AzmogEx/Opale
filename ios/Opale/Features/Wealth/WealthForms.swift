@@ -13,13 +13,15 @@ struct AssetFormSheet: View {
     @State private var kind: AssetKind = .checking
     @State private var currency = "EUR"
     @State private var initialValue = ""
+    @State private var initialDate = Date.now
+    @State private var requestID = UUID().uuidString
     @State private var errorMessage: String?
     @State private var isSaving = false
 
     /// Devises proposées (EF-008) — extensibles via l'éditeur de taux.
-    static let currencies = ["EUR", "USD", "GBP", "CHF"]
+    static let currencies = ["EUR", "USD", "GBP", "CHF", "JPY", "KWD", "CAD", "AUD"]
 
-    private var parsedValue: Cents? { Cents.parse(initialValue) }
+    private var parsedValue: Cents? { Cents.parse(initialValue, currency: currency) }
     private var isValid: Bool {
         !name.trimmingCharacters(in: .whitespaces).isEmpty
             && (initialValue.isEmpty || parsedValue != nil)
@@ -41,7 +43,8 @@ struct AssetFormSheet: View {
                         }
                     }
                 }
-                Section("Valeur actuelle (optionnel)") {
+                Section("Valeur de référence en \(currency) (optionnel)") {
+                    DatePicker("Date de référence", selection: $initialDate, in: ...Date.now, displayedComponents: .date)
                     TextField("Ex. 12 500,00", text: $initialValue)
                         .keyboardType(.decimalPad)
                     if !initialValue.isEmpty, parsedValue == nil {
@@ -72,18 +75,12 @@ struct AssetFormSheet: View {
         isSaving = true
         defer { isSaving = false }
         do {
-            let asset = try await session.api.createAsset(
+            _ = try await session.api.createAsset(
                 name: name.trimmingCharacters(in: .whitespaces),
                 kind: kind,
-                currency: currency
+                currency: currency, initialValue: parsedValue?.raw, initialAsOf: initialDate.opaleDayString, requestID: requestID
             )
-            if let value = parsedValue {
-                _ = try await session.api.addAssetValuation(
-                    assetID: asset.id,
-                    valueCents: value.raw,
-                    asOf: Date.now.opaleDayString
-                )
-            }
+            session.changed()
             onSaved()
             dismiss()
         } catch {
@@ -100,11 +97,14 @@ struct LiabilityFormSheet: View {
 
     @State private var name = ""
     @State private var kind: LiabilityKind = .mortgage
+    @State private var currency = "EUR"
     @State private var initialValue = ""
+    @State private var initialDate = Date.now
+    @State private var requestID = UUID().uuidString
     @State private var errorMessage: String?
     @State private var isSaving = false
 
-    private var parsedValue: Cents? { Cents.parse(initialValue) }
+    private var parsedValue: Cents? { Cents.parse(initialValue, currency: currency) }
     private var isValid: Bool {
         !name.trimmingCharacters(in: .whitespaces).isEmpty
             && (initialValue.isEmpty || parsedValue != nil)
@@ -121,7 +121,9 @@ struct LiabilityFormSheet: View {
                         }
                     }
                 }
-                Section("Capital restant dû (optionnel)") {
+                Section { Picker("Devise", selection: $currency) { ForEach(AssetFormSheet.currencies, id: \.self) { Text($0).tag($0) } } }
+                Section("Capital restant dû en \(currency) (optionnel)") {
+                    DatePicker("Date de référence", selection: $initialDate, in: ...Date.now, displayedComponents: .date)
                     TextField("Ex. 162 000", text: $initialValue)
                         .keyboardType(.decimalPad)
                     if !initialValue.isEmpty, parsedValue == nil {
@@ -152,17 +154,11 @@ struct LiabilityFormSheet: View {
         isSaving = true
         defer { isSaving = false }
         do {
-            let liability = try await session.api.createLiability(
+            _ = try await session.api.createLiability(
                 name: name.trimmingCharacters(in: .whitespaces),
-                kind: kind
+                kind: kind, currency: currency, initialValue: parsedValue?.raw, initialAsOf: initialDate.opaleDayString, requestID: requestID
             )
-            if let value = parsedValue {
-                _ = try await session.api.addLiabilityValuation(
-                    liabilityID: liability.id,
-                    valueCents: value.raw,
-                    asOf: Date.now.opaleDayString
-                )
-            }
+            session.changed()
             onSaved()
             dismiss()
         } catch {
@@ -230,17 +226,45 @@ struct ValuationSheet: View {
 }
 
 extension Date {
+    /// Stable French civil-date presentation, independent of the device timezone.
+    func opaleFormatted(_ style: Date.FormatStyle) -> String {
+        var presentation = style
+        presentation.locale = Locale(identifier: "fr_FR")
+        presentation.calendar = .opale
+        presentation.timeZone = TimeZone(identifier: "Europe/Paris")!
+        return formatted(presentation)
+    }
+
     /// Format `yyyy-MM-dd` attendu par le backend (colonne DATE).
     var opaleDayString: String {
-        formatted(.iso8601.year().month().day())
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "Europe/Paris")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: self)
     }
 
     /// Inverse : lit une date `yyyy-MM-dd` renvoyée par le backend.
-    static func fromOpaleDay(_ day: String) -> Date? {
-        let parts = day.split(separator: "-").compactMap { Int($0) }
-        guard parts.count == 3 else { return nil }
-        var comps = DateComponents()
-        (comps.year, comps.month, comps.day) = (parts[0], parts[1], parts[2])
-        return Calendar.current.date(from: comps)
+    nonisolated static func fromOpaleDay(_ day: String) -> Date? {
+        guard day.range(of: #"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"#, options: .regularExpression) != nil else { return nil }
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "Europe/Paris")
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.isLenient = false
+        guard let date = formatter.date(from: day), formatter.string(from: date) == day else { return nil }
+        return date
+    }
+}
+
+
+extension Calendar {
+    nonisolated static var opale: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "fr_FR")
+        calendar.timeZone = TimeZone(identifier: "Europe/Paris")!
+        return calendar
     }
 }

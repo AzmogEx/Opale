@@ -1,10 +1,18 @@
 import SwiftUI
 
 /// Thème d'Opale — identité inspirée de la pierre : reflets nacrés, irisés.
-/// (Palette de base P1 ; le système de thèmes complet arrive avec EF-005.)
+/// Couleurs d’accent personnalisables, présentation claire/sombre/système.
 enum OpaleTheme {
     /// Couleur d'accent signature (bleu-vert opale).
-    static let accent = Color(red: 0.35, green: 0.72, blue: 0.71)
+    static var accent: Color { color(for: UserDefaults.standard.string(forKey: "appearance.accent") ?? "opale") }
+    static func color(for value: String) -> Color {
+        switch value {
+        case "purple": .purple
+        case "blue": .blue
+        case "orange": .orange
+        default: Color(red: 0.35, green: 0.72, blue: 0.71)
+        }
+    }
 
     /// Dégradé irisé signature, utilisé pour le chiffre du patrimoine
     /// et les surfaces « héro ».

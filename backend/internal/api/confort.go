@@ -7,16 +7,17 @@ package api
 import (
 	"net/http"
 
+	"errors"
 	"github.com/go-chi/chi/v5"
-	"github.com/opale-app/opale/internal/categorize"
+	"github.com/opale-app/opale/internal/bank"
 	"github.com/opale-app/opale/internal/money"
 	"github.com/opale-app/opale/internal/store"
 )
 
 // ── Module entrepreneur (EF-036) ──────────────────────────────────────────────
 
-// PFU : prélèvement forfaitaire unique sur les dividendes (30 %).
-const pfuBps = 3_000
+// PFU 2026 : 12,8 % IR + 18,6 % prélèvements sociaux ; cas général résident.
+const pfuBps = 3_140
 
 // companyStatus — une société + les indicateurs dérivés.
 //
@@ -29,7 +30,7 @@ type companyStatus struct {
 	CompanyValue money.Cents `json:"company_value_cents"`
 	// Ma part + compte courant d'associé (ce que je récupérerais).
 	MyTotal money.Cents `json:"my_total_cents"`
-	// Dividendes annuels nets après PFU 30 % (indicatif).
+	// Dividendes annuels nets après PFU 31,4 % (indicatif).
 	DividendsNet money.Cents `json:"dividends_net_cents"`
 }
 
@@ -44,24 +45,37 @@ func (s *Server) handleCompanies(w http.ResponseWriter, r *http.Request) {
 	for _, c := range companies {
 		st := companyStatus{Company: c}
 		if c.Asset.LatestValue != nil {
-			myShare := int64(*c.Asset.LatestValue)
-			st.CompanyValue = money.Cents(myShare * 10_000 / int64(c.Details.OwnershipBps))
-			st.MyTotal = money.Cents(myShare) + c.Details.CCA
+			myShare := *c.Asset.LatestValue
+			st.CompanyValue, err = scaleCents(myShare, 10000, int64(c.Details.OwnershipBps))
+			if err != nil {
+				s.storeErr(w, err, "company valuation")
+				return
+			}
+			st.MyTotal, err = money.Add(myShare, c.Details.CCA)
+			if err != nil {
+				s.storeErr(w, err, "company total")
+				return
+			}
 		} else {
 			st.MyTotal = c.Details.CCA
 		}
-		st.DividendsNet = money.Cents(int64(c.Details.AnnualDividends) * (10_000 - pfuBps) / 10_000)
+		st.DividendsNet, err = scaleCents(c.Details.AnnualDividends, 10000-pfuBps, 10000)
+		if err != nil {
+			s.storeErr(w, err, "company dividends")
+			return
+		}
 		out = append(out, st)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"companies": out})
 }
 
 type companyRequest struct {
-	SIREN           string `json:"siren"`
-	OwnershipBps    int    `json:"ownership_bps"`
-	CCA             int64  `json:"cca_cents"`
-	AnnualDividends int64  `json:"annual_dividends_cents"`
-	MonthlySalary   int64  `json:"monthly_salary_cents"`
+	SIREN           string  `json:"siren"`
+	OwnershipBps    int     `json:"ownership_bps"`
+	CCA             int64   `json:"cca_cents"`
+	CCAAssetID      *string `json:"cca_asset_id"`
+	AnnualDividends int64   `json:"annual_dividends_cents"`
+	MonthlySalary   int64   `json:"monthly_salary_cents"`
 }
 
 func (s *Server) handleUpsertCompany(w http.ResponseWriter, r *http.Request) {
@@ -85,6 +99,7 @@ func (s *Server) handleUpsertCompany(w http.ResponseWriter, r *http.Request) {
 		SIREN:           req.SIREN,
 		OwnershipBps:    req.OwnershipBps,
 		CCA:             money.Cents(req.CCA),
+		CCAAssetID:      req.CCAAssetID,
 		AnnualDividends: money.Cents(req.AnnualDividends),
 		MonthlySalary:   money.Cents(req.MonthlySalary),
 	}
@@ -139,7 +154,7 @@ func (s *Server) handleBankInstitutions(w http.ResponseWriter, r *http.Request) 
 type bankConnectRequest struct {
 	InstitutionID   string `json:"institution_id"`
 	InstitutionName string `json:"institution_name"`
-	AssetID         string `json:"asset_id"`  // compte Opale qui recevra les mouvements
+	AssetID         string `json:"asset_id"` // compte Opale qui recevra les mouvements
 	Redirect        string `json:"redirect"` // où revenir après le consentement
 }
 
@@ -195,99 +210,40 @@ func (s *Server) handleBankSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := profileFromContext(r.Context())
-
-	links, err := s.store.ListBankLinks(r.Context(), p.ID)
-	if err != nil {
-		s.storeErr(w, err, "bank sync: links")
+	links, e := s.store.ListBankLinks(r.Context(), p.ID)
+	if e != nil {
+		s.storeErr(w, e, "bank links")
 		return
 	}
-	if len(links) == 0 {
-		writeError(w, http.StatusBadRequest, "no_bank_linked", "Aucune banque connectée.")
-		return
-	}
-
-	rules, err := s.store.MerchantRuleNames(r.Context(), p.ID)
-	if err != nil {
-		s.storeErr(w, err, "bank sync: rules")
-		return
-	}
-	byName, err := s.categoriesByName(r, p.ID)
-	if err != nil {
-		s.storeErr(w, err, "bank sync: categories")
-		return
-	}
-
-	type syncResult struct {
-		LinkID      string `json:"link_id"`
-		Institution string `json:"institution"`
-		Status      string `json:"status"` // synced | pending_consent | error
-		Imported    int    `json:"imported"`
-		Duplicates  int    `json:"duplicates"`
-		Error       string `json:"error,omitempty"`
-	}
-	results := make([]syncResult, 0, len(links))
-
+	results := []bankSyncResult{}
 	for _, link := range links {
-		res := syncResult{LinkID: link.ID, Institution: link.InstitutionName}
-
-		requisition, err := s.bank.GetRequisition(r.Context(), link.RequisitionID)
-		if err != nil {
-			res.Status, res.Error = "error", err.Error()
-			results = append(results, res)
-			continue
-		}
-		if len(requisition.Accounts) == 0 {
-			// L'utilisateur n'a pas (encore) donné son consentement.
-			res.Status = "pending_consent"
-			results = append(results, res)
-			continue
-		}
-
-		var prepared []store.NewTransaction
-		for _, accountID := range requisition.Accounts {
-			movements, err := s.bank.Transactions(r.Context(), accountID)
-			if err != nil {
-				res.Status, res.Error = "error", err.Error()
-				break
-			}
-			for _, m := range movements {
-				prepared = append(prepared, store.NewTransaction{
-					AssetID:     link.AssetID,
-					Amount:      m.Amount,
-					OccurredOn:  m.OccurredOn,
-					Label:       categorize.CleanLabel(m.RawLabel),
-					RawLabel:    m.RawLabel,
-					MerchantKey: categorize.MerchantKey(m.RawLabel),
-					CategoryID:  s.suggestCategoryID(r, p.ID, m.RawLabel, m.Amount, rules, byName),
-				})
-			}
-		}
-		if res.Status == "error" {
-			results = append(results, res)
-			continue
-		}
-
-		imported, err := s.store.ImportTransactions(r.Context(), p.ID, prepared)
-		if err != nil {
-			res.Status, res.Error = "error", err.Error()
-			results = append(results, res)
-			continue
-		}
-		res.Status = "synced"
-		res.Imported = imported.Imported
-		res.Duplicates = imported.Duplicates
-		_ = s.store.MarkBankLinkSynced(r.Context(), p.ID, link.ID)
-		results = append(results, res)
+		results = append(results, s.syncBankLink(r.Context(), p.ID, link))
 	}
-
-	writeJSON(w, http.StatusOK, map[string]any{"results": results})
+	writeJSON(w, 200, map[string]any{"results": results})
 }
 
 func (s *Server) handleBankDisconnect(w http.ResponseWriter, r *http.Request) {
-	p := profileFromContext(r.Context())
-	if err := s.store.DeleteBankLink(r.Context(), p.ID, chi.URLParam(r, "id")); err != nil {
-		s.storeErr(w, err, "bank disconnect")
+	if !s.requireBank(w) {
 		return
 	}
-	writeJSON(w, http.StatusNoContent, nil)
+	p := profileFromContext(r.Context())
+	id := chi.URLParam(r, "id")
+	link, e := s.store.BankLink(r.Context(), p.ID, id)
+	if e != nil {
+		s.storeErr(w, e, "bank disconnect")
+		return
+	}
+	if e = s.bank.DeleteRequisition(r.Context(), link.RequisitionID); e != nil {
+		var provider *bank.APIError
+		if !errors.As(e, &provider) || provider.Status != 404 {
+			writeError(w, 502, "revoke_failed", "La révocation bancaire n’a pas abouti, réessaie avant de supprimer le lien")
+			return
+		}
+	}
+	if e = s.store.DeleteBankLink(r.Context(), p.ID, id); e != nil {
+		s.storeErr(w, e, "delete bank link")
+		return
+	}
+	s.journal(r, &p.ID, "bank_revoked", id)
+	writeJSON(w, 204, nil)
 }

@@ -13,7 +13,8 @@
 
 	const tween = new Tween(0, { duration: 700, easing: cubicOut });
 	$effect(() => {
-		if (animate) tween.target = cents;
+		if (animate && !window.matchMedia('(prefers-reduced-motion: reduce)').matches)
+			tween.target = cents;
 		else tween.set(cents, { duration: 0 });
 	});
 

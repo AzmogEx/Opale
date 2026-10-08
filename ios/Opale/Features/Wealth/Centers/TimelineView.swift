@@ -7,12 +7,14 @@ struct TimelineView: View {
 
     @State private var events: [TimelineEvent] = []
     @State private var loaded = false
+    @State private var errorMessage: String?
 
     private var past: [TimelineEvent] { events.filter { !$0.future } }
     private var future: [TimelineEvent] { events.filter(\.future) }
 
     var body: some View {
         List {
+            if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
             if loaded && events.isEmpty {
                 ContentUnavailableView(
                     "Timeline vide",
@@ -53,7 +55,7 @@ struct TimelineView: View {
                     .background(color(e.kind).opacity(0.12), in: .circle)
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text(e.title)
+                Text(e.title).sensitive()
                     .font(.subheadline.weight(.semibold))
                 HStack(spacing: 6) {
                     Text(formatted(e.date))
@@ -66,7 +68,7 @@ struct TimelineView: View {
                     }
                 }
                 if let detail = e.detail, !detail.isEmpty {
-                    Text(detail)
+                    Text(detail).sensitive()
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
@@ -96,11 +98,11 @@ struct TimelineView: View {
 
     private func formatted(_ day: String) -> String {
         guard let date = Date.fromOpaleDay(day) else { return day }
-        return date.formatted(.dateTime.day().month(.wide).year())
+        return date.opaleFormatted(.dateTime.day().month(.wide).year())
     }
 
     private func load() async {
-        events = (try? await session.api.timeline()) ?? []
+        do { events = try await session.api.timeline(); errorMessage = nil } catch { errorMessage = error.localizedDescription }
         loaded = true
     }
 }

@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { money } from '$lib/domain';
+	let selected = $state(0);
 	// Courbe SVG maison — pas de dépendance graphique : une aire dégradée et
 	// une ligne lissée, comme la trajectoire de l'app iOS.
 	let {
@@ -6,7 +8,8 @@
 		height = 180,
 		stroke = 'var(--color-accent)',
 		target = null,
-		labels = []
+		labels = [],
+		pointLabels = []
 	}: {
 		points: number[];
 		height?: number;
@@ -14,6 +17,7 @@
 		/** Ligne cible horizontale optionnelle (ex. seuil d'indépendance). */
 		target?: number | null;
 		labels?: string[];
+		pointLabels?: string[];
 	} = $props();
 
 	const W = 600;
@@ -66,6 +70,23 @@
 			/>
 		{/if}
 	</svg>
+	<label class="chart-scrub"
+		>Explorer la courbe<input
+			type="range"
+			min="0"
+			max={points.length - 1}
+			step="1"
+			bind:value={selected}
+			aria-label="Point de la courbe"
+		/></label
+	>
+	<p class="muted" aria-live="polite">
+		{pointLabels[Math.min(selected, points.length - 1)] ??
+			`Point ${Math.min(selected, points.length - 1) + 1} sur ${points.length}`} : {money(
+			Math.round(points[Math.min(selected, points.length - 1)])
+		)}
+	</p>
+	{#if target !== null}<p class="muted">Cible : {money(target)}</p>{/if}
 	{#if labels.length > 0}
 		<div class="flex justify-between text-xs text-neutral-500">
 			{#each labels as label (label)}<span>{label}</span>{/each}

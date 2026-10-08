@@ -9,9 +9,11 @@ struct RealEstateView: View {
     @State private var liabilities: [Liability] = []
     @State private var editing: PropertyStatus?
     @State private var loaded = false
+    @State private var errorMessage: String?
 
     var body: some View {
         List {
+            if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
             if loaded && properties.isEmpty {
                 ContentUnavailableView(
                     "Aucun bien immobilier",
@@ -52,7 +54,7 @@ struct RealEstateView: View {
                     Text("Valeur estimée")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    AmountText(cents: p.asset.latestValue ?? .zero, style: .whole)
+                    Group { if let value = p.asset.latestValue { AmountText(cents: value, style: .whole, currency: p.asset.currency) } else { Text("Valeur non renseignée") } }
                         .font(.title2.weight(.bold))
                 }
                 Spacer()
@@ -61,7 +63,7 @@ struct RealEstateView: View {
                         Text("Plus-value")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        AmountText(cents: p.capitalGain, style: .signedDelta)
+                        AmountText(cents: p.capitalGain, style: .signedDelta, currency: p.asset.currency)
                             .font(.headline)
                             .foregroundStyle(p.capitalGain.raw < 0 ? OpaleTheme.loss : OpaleTheme.gain)
                     }
@@ -72,13 +74,13 @@ struct RealEstateView: View {
                 Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
                     GridRow {
                         indicator("Rendement brut", percentLabel(p.grossYieldBps))
-                        indicator("Cashflow/mois", MoneyFormat.signedEurosWhole(p.monthlyCashflow),
+                        indicator("Cashflow/mois", MoneyFormat.amount(p.monthlyCashflow, currency: p.asset.currency),
                                   color: p.monthlyCashflow.raw < 0 ? OpaleTheme.loss : OpaleTheme.gain)
                     }
                     GridRow {
-                        indicator("Part possédée", MoneyFormat.eurosWhole(p.equity))
+                        indicator("Part possédée", MoneyFormat.amount(p.equity, currency: p.asset.currency))
                         if let remaining = p.loanRemaining {
-                            indicator("Crédit restant", MoneyFormat.eurosWhole(remaining), color: OpaleTheme.loss)
+                            indicator("Crédit restant", MoneyFormat.amount(remaining, currency: p.asset.currency), color: OpaleTheme.loss)
                         } else {
                             indicator("Crédit", "Aucun")
                         }
@@ -96,7 +98,7 @@ struct RealEstateView: View {
     private func indicator(_ title: String, _ value: String, color: Color = .primary) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title).font(.caption2).foregroundStyle(.secondary)
-            Text(value).font(.subheadline.weight(.semibold)).foregroundStyle(color)
+            Text(value).sensitive().font(.subheadline.weight(.semibold)).foregroundStyle(color)
         }
         .gridColumnAlignment(.leading)
     }
@@ -106,8 +108,7 @@ struct RealEstateView: View {
     }
 
     private func load() async {
-        properties = (try? await session.api.realEstate()) ?? []
-        liabilities = (try? await session.api.listLiabilities()) ?? []
+        do { properties = try await session.api.realEstate(); liabilities = try await session.api.listLiabilities(); errorMessage = nil } catch { errorMessage = error.localizedDescription }
         loaded = true
     }
 }
@@ -135,7 +136,7 @@ private struct PropertyFormSheet: View {
         NavigationStack {
             Form {
                 Section("Achat") {
-                    TextField("Prix d'achat (€)", text: $purchaseText)
+                    TextField("Prix d'achat (\(property.asset.currency))", text: $purchaseText)
                         .keyboardType(.decimalPad)
                     Toggle("Date d'achat", isOn: $hasDate)
                     if hasDate {
@@ -143,21 +144,21 @@ private struct PropertyFormSheet: View {
                     }
                 }
                 Section("Location (si locatif)") {
-                    TextField("Loyer mensuel (€)", text: $rentText)
+                    TextField("Loyer mensuel (\(property.asset.currency))", text: $rentText)
                         .keyboardType(.decimalPad)
-                    TextField("Charges mensuelles (€)", text: $chargesText)
+                    TextField("Charges mensuelles (\(property.asset.currency))", text: $chargesText)
                         .keyboardType(.decimalPad)
-                    TextField("Taxe foncière annuelle (€)", text: $taxText)
+                    TextField("Taxe foncière annuelle (\(property.asset.currency))", text: $taxText)
                         .keyboardType(.decimalPad)
                 }
                 Section("Crédit adossé") {
                     Picker("Crédit", selection: $loanID) {
                         Text("Aucun").tag("")
-                        ForEach(liabilities) { l in
+                        ForEach(liabilities.filter { !$0.archived && $0.currency == property.asset.currency }) { l in
                             Text(l.name).tag(l.id)
                         }
                     }
-                    TextField("Mensualité (€)", text: $loanPaymentText)
+                    TextField("Mensualité (\(property.asset.currency))", text: $loanPaymentText)
                         .keyboardType(.decimalPad)
                 }
                 if let errorMessage {
@@ -180,23 +181,24 @@ private struct PropertyFormSheet: View {
 
     private func prefill() {
         let d = property.details
-        if d.purchasePrice.raw > 0 { purchaseText = String(d.purchasePrice.raw / 100) }
+        if d.purchasePrice.raw > 0 { purchaseText = MoneyFormat.input(d.purchasePrice, currency: property.asset.currency) }
         if let date = d.purchaseDate {
             hasDate = true
             purchaseDate = date
         }
-        if d.monthlyRent.raw > 0 { rentText = String(d.monthlyRent.raw / 100) }
-        if d.monthlyCharges.raw > 0 { chargesText = String(d.monthlyCharges.raw / 100) }
-        if d.propertyTaxYearly.raw > 0 { taxText = String(d.propertyTaxYearly.raw / 100) }
+        if d.monthlyRent.raw > 0 { rentText = MoneyFormat.input(d.monthlyRent, currency: property.asset.currency) }
+        if d.monthlyCharges.raw > 0 { chargesText = MoneyFormat.input(d.monthlyCharges, currency: property.asset.currency) }
+        if d.propertyTaxYearly.raw > 0 { taxText = MoneyFormat.input(d.propertyTaxYearly, currency: property.asset.currency) }
         loanID = d.liabilityID ?? ""
-        if d.monthlyLoanPayment.raw > 0 { loanPaymentText = String(d.monthlyLoanPayment.raw / 100) }
+        if d.monthlyLoanPayment.raw > 0 { loanPaymentText = MoneyFormat.input(d.monthlyLoanPayment, currency: property.asset.currency) }
     }
 
     private func cents(_ text: String) -> Int64 {
-        text.isEmpty ? 0 : (Cents.parse(text)?.raw ?? 0)
+        text.isEmpty ? 0 : (Cents.parse(text, currency: property.asset.currency)?.raw ?? 0)
     }
 
     private func save() async {
+        guard [purchaseText, rentText, chargesText, taxText, loanPaymentText].allSatisfy({ $0.isEmpty || (Cents.parse($0, currency: property.asset.currency)?.raw ?? -1) >= 0 }) else { errorMessage = "Montants positifs valides requis."; return }
         do {
             try await session.api.upsertProperty(assetID: property.asset.id, .init(
                 purchasePriceCents: cents(purchaseText),
@@ -207,6 +209,7 @@ private struct PropertyFormSheet: View {
                 liabilityID: loanID,
                 monthlyLoanPaymentCents: cents(loanPaymentText)
             ))
+            session.changed()
             onSaved()
             dismiss()
         } catch {

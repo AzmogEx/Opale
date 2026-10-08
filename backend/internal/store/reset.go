@@ -21,6 +21,20 @@ func (s *Store) ResetProfileData(ctx context.Context, profileID string) error {
 	// L'ordre suit les dépendances ; les détails (property/object/company)
 	// et les valorisations tombent en cascade avec les actifs/passifs.
 	statements := []string{
+		`DELETE FROM bank_account_bindings WHERE profile_id=$1`,
+		`DELETE FROM profile_fx_history WHERE profile_id=$1`,
+		`DELETE FROM emergency_grants WHERE owner_profile_id=$1 OR recipient_profile_id=$1`,
+		`DELETE FROM beneficiaries WHERE profile_id=$1`,
+		`DELETE FROM calendar_rules WHERE profile_id=$1`,
+		`DELETE FROM recurring_exclusions WHERE profile_id=$1`,
+		`DELETE FROM investment_flows WHERE profile_id=$1`,
+		`DELETE FROM investment_coverage WHERE profile_id=$1`,
+		`DELETE FROM monthly_snapshots WHERE profile_id=$1`,
+		`DELETE FROM allocation_targets WHERE profile_id=$1`,
+		`DELETE FROM custom_alerts WHERE profile_id=$1`,
+		`DELETE FROM push_tokens WHERE profile_id=$1`,
+		`DELETE FROM imported_operations WHERE profile_id=$1`,
+		`DELETE FROM company_details WHERE profile_id=$1`,
 		`DELETE FROM transactions WHERE profile_id = $1`,
 		`DELETE FROM merchant_rules WHERE profile_id = $1`,
 		`DELETE FROM envelopes WHERE profile_id = $1`,

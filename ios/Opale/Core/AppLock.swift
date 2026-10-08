@@ -10,10 +10,13 @@ import LocalAuthentication
 @MainActor
 @Observable
 final class AppLock {
-	/// Réglage persistant (opt-in). Passer par `setEnabled` pour l'UI.
+	/// Réglage persistant (activé par défaut). Passer par `setEnabled` pour l'UI.
 	private(set) var enabled: Bool
 	/// L'app est actuellement verrouillée.
 	private(set) var locked = false
+    private var lastInteraction = Date.now
+    func recordInteraction() { lastInteraction = .now }
+    func checkInactivity(now: Date = .now) { if enabled, now.timeIntervalSince(lastInteraction) >= 300 { locked = true } }
 	/// Une demande biométrique est en cours (évite les doubles prompts —
 	/// le prompt Face ID rend l'app `.inactive`, il ne doit pas se relancer).
 	private var authenticating = false
@@ -23,7 +26,8 @@ final class AppLock {
 	let biometryLabel: String
 
 	init() {
-		enabled = UserDefaults.standard.bool(forKey: "lock.enabled")
+		enabled = UserDefaults.standard.object(forKey: "lock.enabled") as? Bool ?? true
+		locked = (UserDefaults.standard.object(forKey: "lock.enabled") as? Bool ?? true) && Keychain.get("session.token") != nil
 		let context = LAContext()
 		biometryAvailable = context.canEvaluatePolicy(.deviceOwnerAuthentication, error: nil)
 		biometryLabel = switch context.biometryType {
@@ -47,8 +51,8 @@ final class AppLock {
 	}
 
 	/// Verrouille immédiatement (bouton « Verrouiller maintenant »).
-	func lockNow() {
-		guard enabled else { return }
+	func lockNow(force: Bool = false) {
+		guard enabled || force else { return }
 		locked = true
 	}
 
@@ -62,9 +66,11 @@ final class AppLock {
 		guard locked, !authenticating else { return }
 		if await authenticate(reason: "Déverrouiller Opale") {
 			SoundPlayer.play(.unlock)
-			withAnimation(.easeOut(duration: 0.3)) { locked = false }
+			withAnimation(.easeOut(duration: 0.3)) { locked = false; recordInteraction() }
 		}
 	}
+
+    func authenticatedByPIN() { locked = false; recordInteraction() }
 
 	private func authenticate(reason: String) async -> Bool {
 		guard biometryAvailable else { return false }
@@ -80,6 +86,10 @@ final class AppLock {
 /// Écran de verrouillage — masque tout le contenu (mode discret ultime).
 struct LockScreenView: View {
 	let lock: AppLock
+    @Environment(SessionStore.self) private var session
+    @State private var pin = ""
+    @State private var error: String?
+    @State private var busy = false
 
 	var body: some View {
 		ZStack {
@@ -87,7 +97,7 @@ struct LockScreenView: View {
 				.opacity(0.25)
 				.ignoresSafeArea()
 			Rectangle()
-				.fill(.ultraThinMaterial)
+				.fill(Color(uiColor: .systemBackground))
 				.ignoresSafeArea()
 
 			VStack(spacing: 16) {
@@ -96,6 +106,12 @@ struct LockScreenView: View {
 					.foregroundStyle(OpaleTheme.iridescent)
 				Text("Opale est verrouillée")
 					.font(.headline)
+                if !lock.biometryAvailable {
+                    SecureField("Code PIN du profil", text: $pin).keyboardType(.numberPad).textFieldStyle(.roundedBorder).frame(maxWidth: 250)
+                    Button("Déverrouiller avec le PIN") { Task { await unlockPIN() } }.disabled(busy || pin.isEmpty)
+                    if let error { Text(error).font(.caption).foregroundStyle(.red) }
+                    Text("Une connexion au serveur est nécessaire sans code de sécurité de l’appareil.").font(.caption).multilineTextAlignment(.center).padding(.horizontal)
+                }
 				Button {
 					Task { await lock.unlock() }
 				} label: {
@@ -103,9 +119,16 @@ struct LockScreenView: View {
 						.padding(.horizontal, 8)
 				}
 				.buttonStyle(.glassProminent)
+                .disabled(!lock.biometryAvailable)
+                Button("Changer de profil") { session.invalidateSession(); lock.authenticatedByPIN() }
 			}
 		}
-		// Tente le déverrouillage dès l'apparition (retour au premier plan).
-		.task { await lock.unlock() }
 	}
+    private func unlockPIN() async {
+        guard case .loggedIn(let profile) = session.state else { session.invalidateSession(); lock.authenticatedByPIN(); return }
+        busy = true; defer { busy = false }
+        do { try await session.login(profileID: profile.id, pin: pin); pin = ""; lock.authenticatedByPIN() }
+        catch { self.error = error.localizedDescription }
+    }
+
 }

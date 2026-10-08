@@ -13,6 +13,14 @@ import (
 // Migrate applique, dans l'ordre, toutes les migrations *.up.sql embarquées qui
 // n'ont pas encore été exécutées. Idempotent : sûr à lancer à chaque démarrage.
 func (s *Store) Migrate(ctx context.Context) error {
+	return s.Atomic(ctx, func(st *Store) error {
+		if _, err := st.pool.Exec(ctx, "SELECT pg_advisory_xact_lock(74201901)"); err != nil {
+			return err
+		}
+		return st.applyMigrations(ctx)
+	})
+}
+func (s *Store) applyMigrations(ctx context.Context) error {
 	if _, err := s.pool.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version    TEXT PRIMARY KEY,

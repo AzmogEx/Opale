@@ -18,6 +18,10 @@ struct WealthView: View {
     @State private var viewState: ViewState = .loading
     @State private var activeSheet: Sheet?
     @State private var selectedCenter: WealthCenter?
+    @State private var showArchived = false
+    @State private var deletingAsset: Asset?
+    @State private var deletingLiability: Liability?
+    @State private var mutationError: String?
     /// Transition héros : la tuile du centre DEVIENT l'écran.
     @Namespace private var zoomSpace
 
@@ -62,6 +66,7 @@ struct WealthView: View {
                         }
                     } label: {
                         Image(systemName: "plus")
+                            .accessibilityLabel("Ajouter au patrimoine")
                     }
                 }
             }
@@ -95,7 +100,11 @@ struct WealthView: View {
             .navigationDestination(for: Liability.self) { liability in
                 LiabilityDetailView(liability: liability) { Task { await load() } }
             }
-            .task { await load() }
+            .confirmationDialog("Supprimer définitivement ?", isPresented: Binding(get: { deletingAsset != nil || deletingLiability != nil }, set: { if !$0 { deletingAsset = nil; deletingLiability = nil } }), titleVisibility: .visible) {
+                Button("Supprimer", role: .destructive) { Task { await deleteSelected() } }
+            } message: { Text("L’historique et les mouvements associés seront supprimés. Pour garder l’historique, archive la fiche à la place.") }
+            .alert("Modification impossible", isPresented: Binding(get: { mutationError != nil }, set: { if !$0 { mutationError = nil } })) { Button("OK") { mutationError = nil } } message: { Text(mutationError ?? "") }
+            .task(id: session.refreshID) { await load() }
             .refreshable { await load() }
         }
     }
@@ -103,6 +112,8 @@ struct WealthView: View {
     @ViewBuilder
     private func list(assets: [Asset], liabilities: [Liability]) -> some View {
         List {
+            let missing = assets.filter { !$0.archived && $0.latestValue == nil }.count + liabilities.filter { !$0.archived && $0.latestValue == nil }.count
+            if missing > 0 { Section { Label("Total incomplet : \(missing) actifs ou dettes sans valorisation", systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.caption) } }
             // La profondeur (P6) : les centres spécialisés.
             // ⚠️ Pas de NavigationLink ici : plusieurs liens dans UNE ligne de
             // List routent tous les taps vers le premier. Boutons `.plain`
@@ -131,12 +142,13 @@ struct WealthView: View {
                 }
                 .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
             }
+            Section { Toggle("Afficher les archives", isOn: $showArchived) }
             Section("Actifs") {
                 if assets.isEmpty {
                     Text("Aucun actif — ajoute ton premier compte, livret ou bien.")
                         .foregroundStyle(.secondary)
                 }
-                ForEach(assets) { asset in
+                ForEach(assets.filter { showArchived || !$0.archived }) { asset in
                     NavigationLink(value: asset) {
                         row(
                             name: asset.name,
@@ -144,13 +156,13 @@ struct WealthView: View {
                             kindLabel: asset.currency == "EUR"
                                 ? asset.kind.label
                                 : asset.kind.label + " · " + asset.currency,
-                            value: asset.latestValue,
-                            negative: false
+                            value: asset.currentValue ?? asset.latestValue,
+                            negative: false, currency: asset.currency
                         )
                     }
                 }
                 .onDelete { indexSet in
-                    Task { await deleteAssets(at: indexSet, in: assets) }
+                    if let index = indexSet.first { deletingAsset = assets.filter { showArchived || !$0.archived }[index] }
                 }
             }
             Section("Dettes") {
@@ -158,19 +170,19 @@ struct WealthView: View {
                     Text("Aucune dette.")
                         .foregroundStyle(.secondary)
                 }
-                ForEach(liabilities) { liability in
+                ForEach(liabilities.filter { showArchived || !$0.archived }) { liability in
                     NavigationLink(value: liability) {
                         row(
                             name: liability.name,
                             systemImage: liability.kind.systemImage,
                             kindLabel: liability.kind.label,
                             value: liability.latestValue,
-                            negative: true
+                            negative: true, currency: liability.currency
                         )
                     }
                 }
                 .onDelete { indexSet in
-                    Task { await deleteLiabilities(at: indexSet, in: liabilities) }
+                    if let index = indexSet.first { deletingLiability = liabilities.filter { showArchived || !$0.archived }[index] }
                 }
             }
         }
@@ -182,7 +194,7 @@ struct WealthView: View {
         systemImage: String,
         kindLabel: String,
         value: Cents?,
-        negative: Bool
+        negative: Bool, currency: String = "EUR"
     ) -> some View {
         HStack(spacing: 12) {
             ZStack {
@@ -200,7 +212,7 @@ struct WealthView: View {
             }
             Spacer()
             if let value {
-                AmountText(cents: negative ? Cents(-value.raw) : value, style: .whole)
+                AmountText(cents: negative ? Cents(-value.raw) : value, style: .whole, currency: currency)
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(negative ? OpaleTheme.loss : .primary)
             } else {
@@ -217,37 +229,37 @@ struct WealthView: View {
         var liabilities: [Liability]
     }
 
-    private var cacheKey: String { "wealth-\(session.profileID)" }
+    private var cacheKey: String { "wealth-\(session.profileKey)" }
 
     private func load() async {
+        let requestedProfile = session.profileKey
+        let requestedCacheKey = cacheKey
         if case .loading = viewState,
-           let cached = DiskCache.load(WealthCacheSnapshot.self, key: cacheKey) {
+           let cached = DiskCache.load(WealthCacheSnapshot.self, key: requestedCacheKey) {
             viewState = .loaded(cached.value.assets, cached.value.liabilities)
         }
         do {
             async let assets = session.api.listAssets()
             async let liabilities = session.api.listLiabilities()
             let (a, l) = (try await assets, try await liabilities)
+            guard requestedProfile == session.profileKey, !Task.isCancelled else { return }
             viewState = .loaded(a, l)
-            DiskCache.save(WealthCacheSnapshot(assets: a, liabilities: l), key: cacheKey)
+            DiskCache.save(WealthCacheSnapshot(assets: a, liabilities: l), key: requestedCacheKey)
         } catch {
+            guard requestedProfile == session.profileKey, !Task.isCancelled else { return }
             if case .loaded = viewState { return } // on reste sur le cache
             viewState = .error(error.localizedDescription)
         }
     }
 
-    private func deleteAssets(at indexSet: IndexSet, in assets: [Asset]) async {
-        for index in indexSet {
-            try? await session.api.deleteAsset(id: assets[index].id)
-        }
-        await load()
-    }
-
-    private func deleteLiabilities(at indexSet: IndexSet, in liabilities: [Liability]) async {
-        for index in indexSet {
-            try? await session.api.deleteLiability(id: liabilities[index].id)
-        }
-        await load()
+    private func deleteSelected() async {
+        do {
+            if let item = deletingAsset { try await session.api.deleteAsset(id: item.id) }
+            if let item = deletingLiability { try await session.api.deleteLiability(id: item.id) }
+            deletingAsset = nil; deletingLiability = nil
+            session.changed()
+            await load()
+        } catch { mutationError = error.localizedDescription; deletingAsset = nil; deletingLiability = nil }
     }
 }
 
@@ -286,141 +298,13 @@ enum WealthCenter: String, CaseIterable, Identifiable, Hashable {
 
 // MARK: - Détails
 
-/// Détail d'un actif : historique des valorisations + ajout (EF-032).
 struct AssetDetailView: View {
     let asset: Asset
     var onChanged: () -> Void
-
-    @Environment(SessionStore.self) private var session
-    @State private var valuations: [Valuation] = []
-    @State private var showValuationSheet = false
-
-    var body: some View {
-        ValuationHistoryList(
-            title: asset.name,
-            subtitle: asset.kind.label,
-            systemImage: asset.kind.systemImage,
-            valuations: valuations,
-            negative: false,
-            onAdd: { showValuationSheet = true }
-        )
-        .task { await load() }
-        .sheet(isPresented: $showValuationSheet) {
-            ValuationSheet(
-                title: asset.name,
-                save: { cents, day in
-                    _ = try await session.api.addAssetValuation(
-                        assetID: asset.id, valueCents: cents, asOf: day
-                    )
-                },
-                onSaved: {
-                    Task { await load() }
-                    onChanged()
-                }
-            )
-            .presentationDetents([.medium])
-        }
-    }
-
-    private func load() async {
-        valuations = (try? await session.api.assetValuations(assetID: asset.id)) ?? []
-    }
+    var body: some View { HoldingDetailView(id: asset.id, kind: asset.kind.label, currency: asset.currency, liability: false, onChanged: onChanged, name: asset.name, note: asset.note, archived: asset.archived) }
 }
-
-/// Détail d'une dette : historique du capital restant dû + ajout.
 struct LiabilityDetailView: View {
     let liability: Liability
     var onChanged: () -> Void
-
-    @Environment(SessionStore.self) private var session
-    @State private var valuations: [Valuation] = []
-    @State private var showValuationSheet = false
-
-    var body: some View {
-        ValuationHistoryList(
-            title: liability.name,
-            subtitle: liability.kind.label,
-            systemImage: liability.kind.systemImage,
-            valuations: valuations,
-            negative: true,
-            onAdd: { showValuationSheet = true }
-        )
-        .task { await load() }
-        .sheet(isPresented: $showValuationSheet) {
-            ValuationSheet(
-                title: liability.name,
-                save: { cents, day in
-                    _ = try await session.api.addLiabilityValuation(
-                        liabilityID: liability.id, valueCents: cents, asOf: day
-                    )
-                },
-                onSaved: {
-                    Task { await load() }
-                    onChanged()
-                }
-            )
-            .presentationDetents([.medium])
-        }
-    }
-
-    private func load() async {
-        valuations = (try? await session.api.liabilityValuations(liabilityID: liability.id)) ?? []
-    }
-}
-
-/// Liste partagée de l'historique des valorisations.
-private struct ValuationHistoryList: View {
-    var title: String
-    var subtitle: String
-    var systemImage: String
-    var valuations: [Valuation]
-    var negative: Bool
-    var onAdd: () -> Void
-
-    var body: some View {
-        List {
-            Section {
-                HStack(spacing: 12) {
-                    Image(systemName: systemImage)
-                        .font(.title)
-                        .foregroundStyle(negative ? OpaleTheme.loss : OpaleTheme.accent)
-                    VStack(alignment: .leading) {
-                        Text(title).font(.headline)
-                        Text(subtitle).font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if let latest = valuations.first {
-                        AmountText(cents: latest.value, style: .whole)
-                            .font(.title3.weight(.bold))
-                    }
-                }
-            }
-            Section("Historique") {
-                if valuations.isEmpty {
-                    Text("Aucune valorisation — ajoute la première.")
-                        .foregroundStyle(.secondary)
-                }
-                ForEach(valuations) { valuation in
-                    HStack {
-                        Text(valuation.asOf.formatted(.dateTime.day().month(.abbreviated).year()))
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        AmountText(cents: valuation.value, style: .full)
-                            .font(.callout.weight(.medium))
-                    }
-                }
-            }
-        }
-        .navigationTitle(title)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    onAdd()
-                } label: {
-                    Label("Nouvelle valorisation", systemImage: "plus")
-                }
-            }
-        }
-    }
+    var body: some View { HoldingDetailView(id: liability.id, kind: liability.kind.label, currency: liability.currency, liability: true, onChanged: onChanged, name: liability.name, note: liability.note, archived: liability.archived) }
 }

@@ -2,86 +2,127 @@
 	import '../app.css';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
+	import { onMount } from 'svelte';
 	import { session } from '$lib/session.svelte';
-
+	import Settings from '$lib/components/Settings.svelte';
 	let { children } = $props();
-
-	// Porte d'authentification : tout sauf /login exige une session.
+	let settings = $state(false);
+	let offline = $state(false);
+	let lastActivity = Date.now();
 	$effect(() => {
-		const onLogin = page.url.pathname === '/login';
-		if (!session.loggedIn && !onLogin) goto('/login');
-		if (session.loggedIn && onLogin) goto('/');
+		if (session.loggedIn) lastActivity = Date.now();
 	});
-
 	const nav = [
 		{ href: '/', label: 'Accueil', icon: '◉' },
 		{ href: '/flux', label: 'Flux', icon: '⇄' },
-		{ href: '/patrimoine', label: 'Patrimoine', icon: '🏛' },
-		{ href: '/projection', label: 'Projection', icon: '📈' },
+		{ href: '/patrimoine', label: 'Patrimoine', icon: '◇' },
+		{ href: '/projection', label: 'Projection', icon: '↗' },
 		{ href: '/assistant', label: 'Assistant', icon: '✦' }
 	];
-
+	$effect(() => {
+		if (!session.loggedIn && page.url.pathname !== '/login') void goto('/login');
+		if (session.loggedIn && page.url.pathname === '/login') void goto('/');
+	});
+	$effect(() => {
+		document.documentElement.dataset.theme = session.theme;
+		document.documentElement.dataset.accent = session.accent;
+	});
+	onMount(() => {
+		const activity = () => {
+			lastActivity = Date.now();
+		};
+		const visibility = () => {
+			if (document.hidden && session.loggedIn) session.lock();
+		};
+		const network = () => (offline = !navigator.onLine);
+		const expiration = setInterval(() => {
+			if (session.loggedIn && Date.now() - lastActivity >= 300000) session.lock();
+			if (session.token && session.expiresAt && Date.parse(session.expiresAt) <= Date.now())
+				session.invalidate();
+		}, 10000);
+		window.addEventListener('pointerdown', activity);
+		window.addEventListener('keydown', activity);
+		document.addEventListener('visibilitychange', visibility);
+		window.addEventListener('offline', network);
+		window.addEventListener('online', network);
+		network();
+		activity();
+		return () => {
+			clearInterval(expiration);
+			window.removeEventListener('pointerdown', activity);
+			window.removeEventListener('keydown', activity);
+			document.removeEventListener('visibilitychange', visibility);
+			window.removeEventListener('offline', network);
+			window.removeEventListener('online', network);
+		};
+	});
 	async function logout() {
-		await session.logout();
-		goto('/login');
+		try {
+			await session.logout();
+		} catch {
+			session.clear();
+		}
+		settings = false;
 	}
 </script>
 
-<svelte:head>
-	<link
-		rel="icon"
-		href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>🪩</text></svg>"
-	/>
-</svelte:head>
-
-{#if session.loggedIn}
-	<div
-		class="mx-auto flex min-h-screen max-w-6xl gap-6 p-4 md:p-6"
-		class:discreet={session.discreet}
-	>
-		<!-- Barre latérale (desktop) / barre basse (mobile) -->
-		<aside
-			class="glass fixed inset-x-3 bottom-3 z-20 flex items-center justify-around p-2 md:static md:h-fit md:w-52 md:flex-col md:items-stretch md:justify-start md:gap-1 md:p-4"
-		>
-			<div
-				class="iridescent mb-0 hidden px-3 pb-3 text-2xl font-extrabold tracking-tight md:block"
-			>
-				Opale
-			</div>
-			{#each nav as item (item.href)}
-				<a
-					href={item.href}
-					class="flex items-center gap-3 rounded-2xl px-3 py-2 text-sm font-medium transition
-						{page.url.pathname === item.href
-						? 'bg-accent/15 text-accent'
-						: 'text-neutral-600 hover:bg-black/5 dark:text-neutral-300 dark:hover:bg-white/10'}"
-				>
-					<span aria-hidden="true">{item.icon}</span>
-					<span class="hidden md:inline">{item.label}</span>
-				</a>
-			{/each}
-			<div class="md:mt-4 md:border-t md:border-black/5 md:pt-3 dark:md:border-white/10">
+<svelte:head><meta name="theme-color" content="#59b8b5" /></svelte:head>
+{#if session.loggedIn}<div class="app-shell">
+		<a class="sr-link" href="#main-content">Aller au contenu</a>
+		<aside class="sidebar glass">
+			<a class="brand iridescent" href="/" onclick={() => (settings = false)}>Opale</a>
+			<nav aria-label="Navigation principale">
+				{#each nav as item}<a
+						href={item.href}
+						aria-label={item.label}
+						aria-current={!settings && page.url.pathname === item.href ? 'page' : undefined}
+						onclick={() => (settings = false)}
+						><span aria-hidden="true">{item.icon}</span><span>{item.label}</span></a
+					>{/each}
+			</nav>
+			<div class="sidebar-tools">
 				<button
-					onclick={() => (session.discreet = !session.discreet)}
-					class="flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-sm text-neutral-600 hover:bg-black/5 dark:text-neutral-300 dark:hover:bg-white/10"
-					title="Mode discret : flouter les montants"
+					onclick={() => {
+						session.discreet = !session.discreet;
+						session.savePreference('discreet', String(session.discreet));
+					}}
+					aria-pressed={session.discreet}
 				>
-					<span aria-hidden="true">{session.discreet ? '🙈' : '👁'}</span>
-					<span class="hidden md:inline">Mode discret</span>
-				</button>
-				<button
-					onclick={logout}
-					class="hidden w-full items-center gap-3 rounded-2xl px-3 py-2 text-sm text-loss hover:bg-loss/10 md:flex"
+					{session.discreet ? 'Afficher' : 'Masquer'} les données</button
+				><button onclick={() => (settings = !settings)} aria-pressed={settings}>Paramètres</button
+				><button onclick={() => session.lock()}>Verrouiller</button><button onclick={logout}
+					>Déconnexion</button
 				>
-					<span aria-hidden="true">⎋</span> Se déconnecter
-				</button>
 			</div>
 		</aside>
-
-		<main class="min-w-0 flex-1 pb-24 md:pb-0">
-			{@render children()}
-		</main>
-	</div>
-{:else}
-	{@render children()}
-{/if}
+		<div class="main-column">
+			<header class="topbar">
+				<span>{session.profile?.name}</span><span class="muted">Espace personnel</span>
+			</header>
+			{#if offline}<p class="notice" role="status">
+					Hors ligne : les données déjà ouvertes restent consultables jusqu’au verrouillage. Les
+					modifications nécessitent le serveur.
+				</p>{/if}
+			<main id="main-content">
+				{#if session.discreet}<section class="glass panel">
+						<h1>Données masquées</h1>
+						<p>
+							Les montants, graphiques, messages et formulaires sont retirés de l’affichage et des
+							lecteurs d’écran.
+						</p>
+						<button
+							onclick={() => {
+								session.discreet = false;
+								session.savePreference('discreet', 'false');
+							}}>Afficher mes données</button
+						>
+					</section>{:else}{#key session.generation}{#if settings}<h1>Paramètres</h1>
+							<Settings />{:else}{@render children()}{/if}{/key}{/if}
+			</main>
+		</div>
+	</div>{:else if page.url.pathname === '/login'}{@render children()}{:else}<p
+		class="gate"
+		role="status"
+	>
+		Verrouillage…
+	</p>{/if}

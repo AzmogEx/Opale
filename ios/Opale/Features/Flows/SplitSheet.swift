@@ -24,12 +24,12 @@ struct SplitSheet: View {
     @State private var isSaving = false
 
     /// Montant total en valeur absolue (centimes).
-    private var totalAbs: Int64 { abs(transaction.amount.raw) }
+    private var totalAbs: Int64 { transaction.amount.raw == Int64.min ? Int64.max : abs(transaction.amount.raw) }
 
     /// Centimes saisis pour les parts 0..n-2 (la dernière = le reste).
     private var enteredCents: [Int64?] {
         parts.dropLast().map { draft in
-            draft.amountText.isEmpty ? nil : Cents.parse(draft.amountText)?.raw
+            draft.amountText.isEmpty ? nil : Cents.parse(draft.amountText, currency: transaction.currency ?? "EUR")?.raw
         }
     }
 
@@ -37,7 +37,9 @@ struct SplitSheet: View {
         var sum: Int64 = 0
         for c in enteredCents {
             guard let c, c > 0 else { return nil }
-            sum += c
+            let (next, overflow) = sum.addingReportingOverflow(c)
+            guard !overflow, next < totalAbs else { return nil }
+            sum = next
         }
         let rest = totalAbs - sum
         return rest > 0 ? rest : nil
@@ -53,7 +55,7 @@ struct SplitSheet: View {
                         Text(transaction.label)
                             .font(.subheadline.weight(.medium))
                         Spacer()
-                        AmountText(cents: transaction.amount, style: .full)
+                        AmountText(cents: transaction.amount, style: .full, currency: transaction.currency ?? "EUR")
                             .font(.headline)
                     }
                 }
@@ -64,14 +66,15 @@ struct SplitSheet: View {
                             // La dernière part absorbe le reste — toujours juste.
                             LabeledContent("Montant (le reste)") {
                                 if let remainder {
-                                    Text(MoneyFormat.euros(Cents(remainder)))
+                                    Text(MoneyFormat.amount(Cents(remainder), currency: transaction.currency ?? "EUR"))
+                                        .sensitive()
                                         .fontWeight(.semibold)
                                 } else {
                                     Text("—").foregroundStyle(.secondary)
                                 }
                             }
                         } else {
-                            TextField("Montant (€)", text: $part.amountText)
+                            TextField("Montant (\(transaction.currency ?? "EUR"))", text: $part.amountText)
                                 .keyboardType(.decimalPad)
                         }
                         Picker("Catégorie", selection: $part.categoryID) {
@@ -139,6 +142,7 @@ struct SplitSheet: View {
 
         do {
             _ = try await session.api.splitTransaction(id: transaction.id, parts: apiParts)
+            session.changed()
             onSplit()
             dismiss()
         } catch {

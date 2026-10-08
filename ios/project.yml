@@ -16,10 +16,14 @@ settings:
     SWIFT_APPROACHABLE_CONCURRENCY: YES
     CURRENT_PROJECT_VERSION: 1
     MARKETING_VERSION: 0.1.0
+    APS_ENVIRONMENT: development
     # Signature pour l'installation sur appareil réel (équipe Cleanows —
     # compte payant : profils longue durée, App Groups pour le widget).
     CODE_SIGN_STYLE: Automatic
     DEVELOPMENT_TEAM: X3G9BWSS83
+  configs:
+    Release:
+      APS_ENVIRONMENT: production
 
 targets:
   Opale:
@@ -36,10 +40,17 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
         CODE_SIGN_ENTITLEMENTS: Opale/Opale.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    entitlements:
+      path: Opale/Opale.entitlements
+      properties:
+        com.apple.security.application-groups: [group.app.opale.shared]
+        aps-environment: $(APS_ENVIRONMENT)
     info:
       path: Opale/Info.plist
       properties:
         CFBundleDisplayName: Opale
+        CFBundleURLTypes:
+          - CFBundleURLSchemes: [opale]
         # L'app est française : quel que soit le réglage de l'appareil,
         # dates et nombres se formatent en français (Locale.current suit
         # la localisation du bundle).
@@ -55,6 +66,7 @@ targets:
           - app.opale.ios.refresh
         UIBackgroundModes:
           - fetch
+          - remote-notification
 
   # Widget « Patrimoine net » (P7) : lit un instantané écrit par l'app dans
   # l'App Group — aucun réseau, aucun secret côté widget.
@@ -74,6 +86,19 @@ targets:
         CFBundleDisplayName: Opale
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
+
+  OpaleTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - OpaleTests
+    dependencies:
+      - target: Opale
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.opale.tests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
 
   OpaleUITests:
     type: bundle.ui-testing
@@ -95,9 +120,11 @@ schemes:
       targets:
         Opale: all
         OpaleUITests: [test]
+        OpaleTests: [test]
     run:
       config: Debug
     test:
       config: Debug
       targets:
+        - OpaleTests
         - OpaleUITests

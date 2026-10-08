@@ -6,15 +6,22 @@ struct FlowsView: View {
     @Environment(SessionStore.self) private var session
 
     /// Premier jour du mois affiché.
-    @State private var month = Calendar.current.dateInterval(of: .month, for: .now)!.start
+    @State private var month = Calendar.opale.dateInterval(of: .month, for: .now)!.start
     @State private var summary: MonthSummary?
     @State private var transactions: [Transaction] = []
     @State private var categories: [Category] = []
+    @State private var accounts: [Asset] = []
+    @State private var categoryFilter = ""
+    @State private var accountFilter = ""
+    @State private var canLoadMore = false
+    @State private var loadingMore = false
     @State private var searchText = ""
     @State private var errorMessage: String?
 
     @State private var editing: Transaction?
     @State private var showManualForm = false
+    @State private var showTransfer = false
+    @State private var deleting: Transaction?
     @State private var showImport = false
     @State private var showBank = false
 
@@ -29,9 +36,7 @@ struct FlowsView: View {
 
     @State private var segment: Segment = .movements
 
-    private var monthKey: String {
-        month.formatted(.iso8601.year().month())
-    }
+    private var monthKey: String { String(month.opaleDayString.prefix(7)) }
 
     /// Sélection glissante des segments (pill qui voyage).
     @Namespace private var segmentSpace
@@ -45,6 +50,7 @@ struct FlowsView: View {
 
                 VStack(spacing: 12) {
                     header
+                    if segment == .movements { filterBar }
                     switch segment {
                     case .movements: movementsList
                     case .envelopes: EnvelopesView()
@@ -58,6 +64,7 @@ struct FlowsView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
+                        Button("Virement entre mes comptes", systemImage: "arrow.left.arrow.right") { showTransfer = true }
                         Button {
                             showManualForm = true
                         } label: {
@@ -66,7 +73,7 @@ struct FlowsView: View {
                         Button {
                             showImport = true
                         } label: {
-                            Label("Importer un relevé (CSV)", systemImage: "square.and.arrow.down")
+                            Label("Importer un relevé (CSV / OFX)", systemImage: "square.and.arrow.down")
                         }
                         Button {
                             showBank = true
@@ -79,7 +86,7 @@ struct FlowsView: View {
                     .accessibilityLabel("Ajouter")
                 }
             }
-            .task(id: monthKey + "|" + searchText) { await load() }
+            .task(id: requestKey) { await load() }
             .refreshable { await load() }
             .sheet(item: $editing) { tx in
                 TransactionEditSheet(transaction: tx, categories: categories) {
@@ -87,6 +94,14 @@ struct FlowsView: View {
                 }
                 .presentationDetents([.medium, .large])
             }
+            .sheet(isPresented: $showTransfer) { TransferSheet { Task { await load() } } }
+            .confirmationDialog(deleting?.transferID == nil ? "Supprimer ce mouvement ?" : "Supprimer le virement entier ?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
+                Button("Supprimer", role: .destructive) { if let tx = deleting { Task {
+                    do { if let id = tx.transferID { let _: APIClient.EmptyResponse = try await session.api.request("DELETE", "/v1/transfers/\(id)") } else { try await session.api.deleteTransaction(id: tx.id) }; session.changed(); await load() }
+                    catch { errorMessage = error.localizedDescription }
+                    deleting = nil
+                } } }
+            } message: { Text(deleting?.transferID == nil ? "Cette suppression est définitive." : "Les deux mouvements et leurs frais seront supprimés ensemble.") }
             .sheet(isPresented: $showManualForm) {
                 ManualTransactionSheet(categories: categories) {
                     Task { await load() }
@@ -102,6 +117,20 @@ struct FlowsView: View {
             }
         }
     }
+
+    private var filterBar: some View {
+        HStack {
+            Picker("Catégorie", selection: $categoryFilter) {
+                Text("Toutes catégories").tag("")
+                ForEach(categories) { Text($0.name).tag($0.id) }
+            }
+            Picker("Compte", selection: $accountFilter) {
+                Text("Tous comptes").tag("")
+                ForEach(accounts) { Text($0.name).tag($0.id) }
+            }
+        }.padding(.horizontal).font(.caption)
+    }
+    private var requestKey: String { [monthKey, searchText, categoryFilter, accountFilter, session.refreshID.uuidString].joined(separator: "|") }
 
     // MARK: - En-tête custom : recherche en verre + pills animées
 
@@ -188,7 +217,7 @@ struct FlowsView: View {
                 Image(systemName: "chevron.left")
             }
             Spacer()
-            Text(month.formatted(.dateTime.month(.wide).year()).capitalized)
+            Text(month.opaleFormatted(.dateTime.month(.wide).year()).capitalized)
                 .font(.headline)
                 .contentTransition(.numericText())
                 .animation(.snappy, value: month)
@@ -206,11 +235,11 @@ struct FlowsView: View {
     }
 
     private var isCurrentMonth: Bool {
-        Calendar.current.isDate(month, equalTo: .now, toGranularity: .month)
+        Calendar.opale.isDate(month, equalTo: .now, toGranularity: .month)
     }
 
     private func shiftMonth(_ delta: Int) {
-        if let next = Calendar.current.date(byAdding: .month, value: delta, to: month) {
+        if let next = Calendar.opale.date(byAdding: .month, value: delta, to: month) {
             month = next
         }
     }
@@ -246,7 +275,7 @@ struct FlowsView: View {
 
     private var grouped: [(day: Date, items: [Transaction])] {
         let dict = Dictionary(grouping: transactions) {
-            Calendar.current.startOfDay(for: $0.occurredOn)
+            Calendar.opale.startOfDay(for: $0.occurredOn)
         }
         return dict.keys.sorted(by: >).map { (day: $0, items: dict[$0]!) }
     }
@@ -263,7 +292,7 @@ struct FlowsView: View {
             // Une carte de verre par jour — l'écran respire.
             ForEach(Array(grouped.enumerated()), id: \.element.day) { index, group in
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(group.day.formatted(.dateTime.weekday(.wide).day().month(.wide)).capitalized)
+                    Text(group.day.opaleFormatted(.dateTime.weekday(.wide).day().month(.wide)).capitalized)
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(.secondary)
                         .padding(.leading, 6)
@@ -285,10 +314,7 @@ struct FlowsView: View {
                                         Label("Modifier", systemImage: "square.and.pencil")
                                     }
                                     Button(role: .destructive) {
-                                        Task {
-                                            try? await session.api.deleteTransaction(id: tx.id)
-                                            await load()
-                                        }
+                                        deleting = tx
                                     } label: {
                                         Label("Supprimer", systemImage: "trash")
                                     }
@@ -302,28 +328,52 @@ struct FlowsView: View {
                 }
                 .cascadeIn(index)
             }
+            if canLoadMore { Button(loadingMore ? "Chargement…" : "Charger la suite") { Task { await loadMore() } }.disabled(loadingMore) }
         }
+    }
+
+    private func loadMore() async {
+        guard !loadingMore else { return }
+        let key = requestKey
+        let profile = session.profileKey
+        loadingMore = true; defer { loadingMore = false }
+        do {
+            let interval = Calendar.opale.dateInterval(of: .month, for: month)!
+            let lastDay = Calendar.opale.date(byAdding: .day, value: -1, to: interval.end)!
+            let page = try await session.api.listTransactions(from: interval.start.opaleDayString, to: lastDay.opaleDayString, query: searchText.isEmpty ? nil : searchText, categoryID: categoryFilter.isEmpty ? nil : categoryFilter, assetID: accountFilter.isEmpty ? nil : accountFilter, offset: transactions.count)
+            guard key == requestKey, profile == session.profileKey, !Task.isCancelled else { return }
+            transactions.append(contentsOf: page)
+            canLoadMore = page.count == 100
+        } catch { errorMessage = error.localizedDescription }
     }
 
     // MARK: - Chargement
 
     private func load() async {
+        let key = requestKey
+        let profile = session.profileKey
         do {
-            let interval = Calendar.current.dateInterval(of: .month, for: month)!
-            let lastDay = Calendar.current.date(byAdding: .day, value: -1, to: interval.end)!
-            let comps = Calendar.current.dateComponents([.year, .month], from: month)
+            let interval = Calendar.opale.dateInterval(of: .month, for: month)!
+            let lastDay = Calendar.opale.date(byAdding: .day, value: -1, to: interval.end)!
+            let comps = Calendar.opale.dateComponents([.year, .month], from: month)
 
             async let txs = session.api.listTransactions(
                 from: interval.start.opaleDayString,
                 to: lastDay.opaleDayString,
-                query: searchText.isEmpty ? nil : searchText
+                query: searchText.isEmpty ? nil : searchText,
+                categoryID: categoryFilter.isEmpty ? nil : categoryFilter,
+                assetID: accountFilter.isEmpty ? nil : accountFilter
             )
             async let sum = session.api.monthSummary(year: comps.year!, month: comps.month!)
-            if categories.isEmpty {
-                categories = try await session.api.listCategories()
-            }
-            transactions = try await txs
-            summary = try await sum
+            async let loadedCategories = session.api.listCategories()
+            async let loadedAccounts = session.api.listAssets()
+            let (loadedTransactions, loadedSummary, newCategories, newAccounts) = try await (txs, sum, loadedCategories, loadedAccounts)
+            guard key == requestKey, profile == session.profileKey, !Task.isCancelled else { return }
+            categories = newCategories
+            accounts = newAccounts
+            transactions = loadedTransactions
+            canLoadMore = transactions.count == 100
+            summary = loadedSummary
             errorMessage = nil
         } catch is CancellationError {
         } catch {
@@ -365,7 +415,7 @@ struct TransactionRow: View {
                     .foregroundStyle(transaction.categoryName == nil ? AnyShapeStyle(OpaleTheme.accent) : AnyShapeStyle(.secondary))
             }
             Spacer()
-            AmountText(cents: transaction.amount, style: .full)
+            AmountText(cents: transaction.amount, style: .full, currency: transaction.currency ?? "EUR")
                 .font(.callout.weight(.semibold))
                 .foregroundStyle(transaction.amount.raw > 0 ? OpaleTheme.gain : .primary)
         }

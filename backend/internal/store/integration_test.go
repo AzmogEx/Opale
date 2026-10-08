@@ -41,6 +41,7 @@ func newTestProfile(t *testing.T, s *Store, name string) Profile {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = s.DeleteProfile(context.Background(), p.ID) })
 	return p
 }
 

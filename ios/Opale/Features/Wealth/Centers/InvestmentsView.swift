@@ -9,9 +9,11 @@ struct InvestmentsView: View {
     @State private var investments: [InvestmentStatus] = []
     @State private var total: Cents = .zero
     @State private var loaded = false
+    @State private var errorMessage: String?
 
     var body: some View {
         List {
+            if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
             if loaded && investments.isEmpty {
                 ContentUnavailableView(
                     "Aucun placement",
@@ -22,7 +24,7 @@ struct InvestmentsView: View {
 
             if !investments.isEmpty {
                 Section {
-                    allocationChart
+                    allocationChart.sensitive()
                         .listRowBackground(Color.clear)
                 } header: {
                     HStack {
@@ -36,7 +38,7 @@ struct InvestmentsView: View {
 
                 Section("Performance") {
                     ForEach(investments) { inv in
-                        row(inv)
+                        NavigationLink { InvestmentDetailView(assetID: inv.asset.id) } label: { row(inv) }
                     }
                 }
             }
@@ -50,16 +52,16 @@ struct InvestmentsView: View {
 
     // Donut de répartition (SectorMark, valeurs strictement positives).
     private var allocationChart: some View {
-        Chart(investments.filter { ($0.asset.latestValue?.raw ?? 0) > 0 }) { inv in
+        Chart(investments.filter { ($0.valueEUR?.raw ?? 0) > 0 }) { inv in
             SectorMark(
-                angle: .value("Valeur", inv.asset.latestValue?.chartValue ?? 0),
+                angle: .value("Valeur", inv.valueEUR?.chartValue ?? 0),
                 innerRadius: .ratio(0.62),
                 angularInset: 1.5
             )
             .cornerRadius(4)
             .foregroundStyle(by: .value("Placement", inv.asset.name))
             .accessibilityLabel(inv.asset.name)
-            .accessibilityValue(MoneyFormat.eurosWhole(inv.asset.latestValue ?? .zero))
+            .accessibilityValue(MoneyFormat.eurosWhole(inv.valueEUR ?? .zero))
         }
         .chartLegend(position: .bottom, spacing: 8)
         .frame(minHeight: 220)
@@ -86,13 +88,12 @@ struct InvestmentsView: View {
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
-                AmountText(cents: inv.asset.latestValue ?? .zero, style: .whole)
+                Group { if let value = inv.asset.currentValue ?? inv.asset.latestValue { AmountText(cents: value, style: .whole, currency: inv.asset.currency) } else { Text("Valeur non renseignée") } }
                     .font(.callout.weight(.semibold))
-                if inv.firstValue.raw > 0, inv.change.raw != 0 {
-                    Text("\(MoneyFormat.signedEurosWhole(inv.change)) (\(percentLabel(inv.changeBps)))")
-                        .font(.caption)
-                        .foregroundStyle(inv.change.raw < 0 ? OpaleTheme.loss : OpaleTheme.gain)
-                }
+                if let performance = inv.performance, performance.known {
+                    AmountText(cents: performance.gain_cents, style: .signedDelta, currency: inv.asset.currency).font(.caption)
+                } else { Text("Performance indéterminée").font(.caption2).foregroundStyle(.secondary) }
+
             }
         }
     }
@@ -103,10 +104,11 @@ struct InvestmentsView: View {
     }
 
     private func load() async {
-        if let result = try? await session.api.investments() {
+        do { let result = try await session.api.investments()
             investments = result.items
             total = result.total
-        }
+            errorMessage = nil
+        } catch { errorMessage = error.localizedDescription }
         loaded = true
     }
 }

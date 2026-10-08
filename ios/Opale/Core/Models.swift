@@ -107,10 +107,12 @@ struct Asset: Identifiable, Codable, Hashable, Sendable {
     var note: String
     var archived: Bool
     var latestValue: Cents?
+    var currentValue: Cents?
 
     enum CodingKeys: String, CodingKey {
         case id, name, kind, currency, note, archived
         case latestValue = "latest_value_cents"
+        case currentValue = "theoretical_cents"
     }
 }
 
@@ -149,12 +151,15 @@ struct NetWorth: Codable, Hashable, Sendable {
     var liabilitiesTotal: Cents
     var net: Cents
     var currency: String
+    var complete: Bool?
+    var missingValuations: Int?
 
     enum CodingKeys: String, CodingKey {
         case assetsTotal = "assets_total_cents"
         case liabilitiesTotal = "liabilities_total_cents"
         case net = "net_cents"
-        case currency
+        case currency, complete
+        case missingValuations = "missing_valuations"
     }
 }
 
@@ -244,6 +249,10 @@ struct Transaction: Identifiable, Codable, Hashable, Sendable {
     var categoryName: String?
     var note: String
     var spaceID: String?
+    var currency: String?
+    var flowKind: String?
+    var transferID: String?
+    var linkedLiabilityID: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -256,6 +265,10 @@ struct Transaction: Identifiable, Codable, Hashable, Sendable {
         case categoryName = "category_name"
         case note
         case spaceID = "space_id"
+        case currency
+        case flowKind = "flow_kind"
+        case transferID = "transfer_id"
+        case linkedLiabilityID = "linked_liability_id"
     }
 }
 
@@ -350,6 +363,13 @@ struct CashProjection: Codable, Hashable, Sendable {
     var until: Date
     var upcoming: [UpcomingFlow]
 
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        startCash = try c.decode(Cents.self, forKey: .startCash)
+        endCash = try c.decode(Cents.self, forKey: .endCash)
+        until = try c.decode(Date.self, forKey: .until)
+        upcoming = try c.decodeIfPresent([UpcomingFlow].self, forKey: .upcoming) ?? []
+    }
     enum CodingKeys: String, CodingKey {
         case startCash = "start_cash_cents"
         case endCash = "end_cash_cents"
@@ -369,6 +389,8 @@ struct HealthComponent: Codable, Hashable, Identifiable, Sendable {
 struct HealthScore: Codable, Hashable, Sendable {
     var score: Int
     var components: [HealthComponent]
+    var emergencyFundReady: Bool?
+    enum CodingKeys: String, CodingKey { case score, components; case emergencyFundReady = "emergency_fund_ready" }
 }
 
 struct GoalStatus: Identifiable, Codable, Hashable, Sendable {
@@ -382,6 +404,10 @@ struct GoalStatus: Identifiable, Codable, Hashable, Sendable {
     var progress: Cents
     var percent: Int
     var onTrack: Bool?
+    var remaining: Cents?
+    var estimatedDate: Date?
+    var estimateReason: String?
+    var monthlySavings: Cents?
 
     enum CodingKeys: String, CodingKey {
         case id, name, icon, percent
@@ -391,6 +417,10 @@ struct GoalStatus: Identifiable, Codable, Hashable, Sendable {
         case assetName = "asset_name"
         case progress = "progress_cents"
         case onTrack = "on_track"
+        case remaining = "remaining_cents"
+        case estimatedDate = "estimated_date"
+        case estimateReason = "estimate_reason"
+        case monthlySavings = "monthly_savings_cents"
     }
 }
 
@@ -427,7 +457,12 @@ struct AssistantStatus: Codable, Hashable, Sendable {
 /// Réponse de l'assistant (EF-050/051).
 struct AskResponse: Codable, Hashable, Sendable {
     var answer: String
-    var tier: String // "n2" | "n3" | "" (repli moteur)
+    var tier: String // n1, n2, n3 or deterministic
+    var state: String?
+    var facts: [AssistantFact]?
+    var cloudEligible: Bool?
+    var providerState: String?
+    enum CodingKeys: String, CodingKey { case answer, tier, state, facts; case cloudEligible = "cloud_eligible"; case providerState = "provider_state" }
 }
 
 /// Un scénario du Mode Décision (EF-052).
@@ -632,11 +667,14 @@ struct InvestmentStatus: Codable, Hashable, Identifiable, Sendable {
     var change: Cents
     var changeBps: Int
     var allocationBps: Int
+    var performance: InvestmentPerformance?
+    var valueEUR: Cents?
 
     var id: String { asset.id }
 
     enum CodingKeys: String, CodingKey {
-        case asset
+        case asset, performance
+        case valueEUR = "value_eur_cents"
         case firstValue = "first_value_cents"
         case firstDate = "first_date"
         case change = "change_cents"
@@ -754,10 +792,13 @@ struct TransmissionSummary: Codable, Hashable, Sendable {
         var name: String
         var kind: AssetKind
         var latestValue: Cents?
+        var currency: String?
+        var currentValue: Cents?
         var documentCount: Int
 
         enum CodingKeys: String, CodingKey {
-            case id, name, kind
+            case id, name, kind, currency
+            case currentValue = "theoretical_cents"
             case latestValue = "latest_value_cents"
             case documentCount = "document_count"
         }
@@ -819,6 +860,7 @@ struct CompanyDetails: Codable, Hashable, Sendable {
     var siren: String
     var ownershipBps: Int
     var cca: Cents
+    var ccaAssetID: String?
     var annualDividends: Cents
     var monthlySalary: Cents
 
@@ -826,6 +868,7 @@ struct CompanyDetails: Codable, Hashable, Sendable {
         case siren
         case ownershipBps = "ownership_bps"
         case cca = "cca_cents"
+        case ccaAssetID = "cca_asset_id"
         case annualDividends = "annual_dividends_cents"
         case monthlySalary = "monthly_salary_cents"
     }
@@ -857,6 +900,9 @@ struct BankLink: Codable, Hashable, Identifiable, Sendable {
     var assetName: String?
     var institutionName: String
     var status: String // created | linked
+    var syncStatus: String?
+    var lastError: String?
+    var nextSyncAt: Date?
     var lastSyncedAt: Date?
 
     enum CodingKeys: String, CodingKey {
@@ -865,6 +911,7 @@ struct BankLink: Codable, Hashable, Identifiable, Sendable {
         case assetName = "asset_name"
         case institutionName = "institution_name"
         case lastSyncedAt = "last_synced_at"
+        case syncStatus = "sync_status", lastError = "last_error", nextSyncAt = "next_sync_at"
     }
 }
 
@@ -971,12 +1018,16 @@ struct SpaceDetail: Codable, Hashable, Sendable {
 struct FXRate: Codable, Hashable, Identifiable, Sendable {
     var currency: String
     var rateMicro: Int64
+    var asOf: String?
+    var source: String?
+    var updatedAt: Date?
 
     var id: String { currency }
 
     enum CodingKeys: String, CodingKey {
         case currency
         case rateMicro = "rate_micro"
+        case asOf = "as_of", source, updatedAt = "updated_at"
     }
 }
 
@@ -1023,3 +1074,12 @@ struct ValuationsEnvelope: Codable, Sendable { let valuations: [Valuation] }
 struct ProfilesEnvelope: Codable, Sendable { let profiles: [Profile] }
 struct CategoriesEnvelope: Codable, Sendable { let categories: [Category] }
 struct TransactionsEnvelope: Codable, Sendable { let transactions: [Transaction] }
+
+struct AssistantFact: Codable, Hashable, Identifiable, Sendable {
+    var id: String
+    var value_cents: Cents?
+    var unit: String
+    var period: String
+    var source: String
+    var text: String
+}

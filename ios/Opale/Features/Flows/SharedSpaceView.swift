@@ -13,10 +13,12 @@ struct SharedSpaceView: View {
     @State private var loaded = false
     @State private var errorMessage: String?
 
-    private var space: Space? { spaces.first }
+    @State private var selectedID = ""
+    private var space: Space? { spaces.first { $0.id == selectedID } ?? spaces.first }
 
     var body: some View {
         List {
+            if spaces.count > 1 { Picker("Espace", selection: $selectedID) { ForEach(spaces) { Text($0.name).tag($0.id) } } }
             if let space {
                 if let detail {
                     balanceSection(detail)
@@ -30,12 +32,14 @@ struct SharedSpaceView: View {
             } else {
                 ProgressView()
             }
+            if loaded, !spaces.isEmpty { createSection }
             if let errorMessage {
                 Text(errorMessage).foregroundStyle(OpaleTheme.loss)
             }
         }
         .opaleList()
         .task { await load() }
+        .task(id: selectedID) { await loadDetail() }
         .refreshable { await load() }
         .sheet(isPresented: $showAddMember) {
             if let space {
@@ -86,6 +90,7 @@ struct SharedSpaceView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(m.name).font(.body.weight(.medium))
                         Text("payé \(MoneyFormat.eurosWhole(m.paid)) · quote-part \(MoneyFormat.eurosWhole(m.share))")
+                            .sensitive()
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -109,6 +114,7 @@ struct SharedSpaceView: View {
         Section {
             ForEach(space.members) { m in
                 Label(m.name, systemImage: "person.circle")
+                    .swipeActions { Button(role: .destructive) { Task { await removeMember(m.profileID) } } label: { Label("Retirer", systemImage: "person.badge.minus") } }
             }
             Button {
                 showAddMember = true
@@ -134,7 +140,7 @@ struct SharedSpaceView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(t.label).font(.subheadline.weight(.medium))
-                        Text("\(t.payerName) · \(t.occurredOn.formatted(.dateTime.day().month(.abbreviated)))")
+                        Text("\(t.payerName) · \(t.occurredOn.opaleFormatted(.dateTime.day().month(.abbreviated)))")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -151,18 +157,33 @@ struct SharedSpaceView: View {
     // MARK: - Actions
 
     private func load() async {
-        spaces = (try? await session.api.spaces()) ?? []
-        if let space {
-            detail = try? await session.api.spaceDetail(id: space.id)
-        }
+        do {
+            spaces = try await session.api.spaces()
+            if !spaces.contains(where: { $0.id == selectedID }) { selectedID = spaces.first?.id ?? "" }
+            await loadDetail()
+        } catch { errorMessage = error.localizedDescription }
         loaded = true
+    }
+
+    private func loadDetail() async {
+        detail = nil
+        guard let space else { return }
+        let requested = space.id
+        do { let value = try await session.api.spaceDetail(id: requested); guard requested == self.space?.id else { return }; detail = value; errorMessage = nil }
+        catch { errorMessage = error.localizedDescription }
+    }
+    private func removeMember(_ profileID: String) async {
+        guard let space else { return }
+        do { try await session.api.removeSpaceMember(spaceID: space.id, profileID: profileID); detail = nil; await load() }
+        catch { errorMessage = error.localizedDescription }
     }
 
     private func createSpace() async {
         do {
-            _ = try await session.api.createSpace(
+            let created = try await session.api.createSpace(
                 name: newSpaceName.trimmingCharacters(in: .whitespaces))
             newSpaceName = ""
+            selectedID = created.id
             await load()
         } catch {
             errorMessage = error.localizedDescription
@@ -212,7 +233,7 @@ private struct AddMemberSheet: View {
                 }
             }
             .task {
-                profiles = (try? await session.api.listProfiles()) ?? []
+                do { profiles = try await session.api.listProfiles(); errorMessage = nil } catch { errorMessage = error.localizedDescription }
             }
         }
     }

@@ -32,7 +32,7 @@ db: ## Démarre uniquement PostgreSQL via Docker
 	docker compose up -d db
 
 .PHONY: up
-up: ## Démarre toute la pile (db + api) via Docker
+up: ## Démarre toute la pile (db + api + web) via Docker
 	docker compose up -d --build
 
 .PHONY: down
@@ -44,4 +44,14 @@ logs: ## Affiche les logs de l'API
 	docker compose logs -f api
 
 .PHONY: ci
-ci: tidy vet test build ## Pipeline locale équivalente à la CI
+ci: tidy vet test build ## Contrôles Go locaux (tidy peut modifier go.mod/go.sum)
+
+.PHONY: web-check backup restore
+web-check: ## Valide et construit le web
+	cd web && npm ci && npm run check && npm test && npm run build
+
+backup: ## Sauvegarde DB et documents chiffrés dans backups/
+	./scripts/backup.sh
+
+restore: ## Restaure vers une nouvelle base : make restore FILE=... TARGET=opale_restore
+	./scripts/restore.sh "$(FILE)" "$(TARGET)"

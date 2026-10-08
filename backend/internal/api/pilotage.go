@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -16,7 +17,7 @@ import (
 
 func (s *Server) handleEnvelopeStatuses(w http.ResponseWriter, r *http.Request) {
 	p := profileFromContext(r.Context())
-	now := time.Now()
+	now := parisToday()
 	year, month := now.Year(), int(now.Month())
 	if raw := r.URL.Query().Get("year"); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil {
@@ -78,7 +79,18 @@ func (s *Server) detectRecurring(r *http.Request, profileID string) ([]engine.Re
 	if err != nil {
 		return nil, err
 	}
-	return engine.DetectRecurring(obs, time.Now()), nil
+	flows := engine.DetectRecurring(obs, parisToday())
+	excluded, err := s.store.RecurringExcludedKeys(r.Context(), profileID)
+	if err != nil {
+		return nil, err
+	}
+	out := flows[:0]
+	for _, f := range flows {
+		if !excluded[f.MerchantKey] {
+			out = append(out, f)
+		}
+	}
+	return out, nil
 }
 
 func (s *Server) handleRecurring(w http.ResponseWriter, r *http.Request) {
@@ -115,14 +127,28 @@ func (s *Server) handleCashflow(w http.ResponseWriter, r *http.Request) {
 	for _, f := range flows {
 		keys = append(keys, f.MerchantKey)
 	}
+	manualKeys, err := s.store.CalendarMerchantKeys(r.Context(), p.ID)
+	if err != nil {
+		s.storeErr(w, err, "calendar keys")
+		return
+	}
+	keys = append(keys, manualKeys...)
 	daily, err := s.store.AvgDailyVariableSpend(r.Context(), p.ID, keys)
 	if err != nil {
 		s.storeErr(w, err, "cashflow: variable spend")
 		return
 	}
 
-	today := time.Now().Truncate(24 * time.Hour)
-	proj := engine.ProjectCash(cash, flows, today, today.AddDate(0, 0, days), daily)
+	today := parisToday()
+	proj, err := engine.ProjectCash(cash, flows, today, today.AddDate(0, 0, days), daily)
+	if err != nil {
+		s.storeErr(w, err, "cash projection")
+		return
+	}
+	if err := s.addCalendarFlows(r, p.ID, today, &proj); err != nil {
+		s.storeErr(w, err, "calendar cashflow")
+		return
+	}
 	writeJSON(w, http.StatusOK, proj)
 }
 
@@ -158,10 +184,19 @@ func (s *Server) handleHealthScore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Charges fixes mensualisées : Σ |montant| × 30 / intervalle (flux actifs négatifs).
-	var fixedMonthly int64
+	var fixedMonthly money.Cents
 	for _, f := range flows {
 		if f.Active && f.Amount < 0 && f.IntervalDays > 0 {
-			fixedMonthly += -int64(f.Amount) * 30 / int64(f.IntervalDays)
+			monthly, e := scaleCents(f.Amount, -30, int64(f.IntervalDays))
+			if e != nil {
+				s.storeErr(w, e, "fixed expenses")
+				return
+			}
+			fixedMonthly, e = money.Add(fixedMonthly, monthly)
+			if e != nil {
+				s.storeErr(w, e, "fixed expenses sum")
+				return
+			}
 		}
 	}
 
@@ -183,8 +218,7 @@ func (s *Server) handleHealthScore(w http.ResponseWriter, r *http.Request) {
 type goalStatus struct {
 	store.Goal
 	Progress money.Cents `json:"progress_cents"`
-	Percent  int         `json:"percent"` // 0..100 (borné)
-	OnTrack  *bool       `json:"on_track,omitempty"`
+	engine.GoalProjection
 }
 
 func (s *Server) goalStatuses(r *http.Request, profileID string) ([]goalStatus, error) {
@@ -192,45 +226,25 @@ func (s *Server) goalStatuses(r *http.Request, profileID string) ([]goalStatus, 
 	if err != nil {
 		return nil, err
 	}
-	var nw *store.NetWorth
 	out := make([]goalStatus, 0, len(goals))
+	nw, err := s.store.ComputeNetWorth(r.Context(), profileID)
+	if err != nil {
+		return nil, err
+	}
+	now := parisToday()
 	for _, g := range goals {
-		st := goalStatus{Goal: g}
-
-		// Progression : l'actif source si défini, sinon le patrimoine net.
+		progress := nw.Net
 		if g.AssetID != nil {
-			v, err := s.store.AssetLatestValue(r.Context(), profileID, *g.AssetID)
+			progress, err = s.store.AssetLatestValue(r.Context(), profileID, *g.AssetID)
 			if err != nil {
 				return nil, err
 			}
-			st.Progress = v
-		} else {
-			if nw == nil {
-				v, err := s.store.ComputeNetWorth(r.Context(), profileID)
-				if err != nil {
-					return nil, err
-				}
-				nw = &v
-			}
-			st.Progress = nw.Net
 		}
-
-		if g.Target > 0 {
-			pct := int(int64(st.Progress) * 100 / int64(g.Target))
-			st.Percent = min(max(pct, 0), 100)
+		status, err := engine.ProjectGoal(g.Target, progress, g.MonthlySavings, g.TargetDate, now)
+		if err != nil {
+			return nil, err
 		}
-
-		// En avance / en retard : progression comparée à la droite temps→cible.
-		if g.TargetDate != nil {
-			total := g.TargetDate.Sub(g.CreatedAt)
-			elapsed := time.Since(g.CreatedAt)
-			if total > 0 && elapsed > 0 {
-				expected := int64(g.Target) * int64(elapsed) / int64(total)
-				onTrack := int64(st.Progress) >= expected
-				st.OnTrack = &onTrack
-			}
-		}
-		out = append(out, st)
+		out = append(out, goalStatus{Goal: g, Progress: progress, GoalProjection: status})
 	}
 	return out, nil
 }
@@ -246,48 +260,55 @@ func (s *Server) handleListGoals(w http.ResponseWriter, r *http.Request) {
 }
 
 type goalRequest struct {
-	Name       string `json:"name"`
-	Icon       string `json:"icon"`
-	Target     int64  `json:"target_cents"`
-	TargetDate string `json:"target_date"` // yyyy-MM-dd, optionnel
-	AssetID    string `json:"asset_id"`    // optionnel
+	Name           string `json:"name"`
+	Icon           string `json:"icon"`
+	Target         int64  `json:"target_cents"`
+	MonthlySavings int64  `json:"monthly_savings_cents"`
+	TargetDate     string `json:"target_date"` // yyyy-MM-dd, optionnel
+	AssetID        string `json:"asset_id"`    // optionnel
 }
 
-func (s *Server) handleCreateGoal(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleCreateGoal(w http.ResponseWriter, r *http.Request) { s.saveGoal(w, r, "") }
+func (s *Server) handleUpdateGoal(w http.ResponseWriter, r *http.Request) {
+	s.saveGoal(w, r, chi.URLParam(r, "id"))
+}
+func (s *Server) saveGoal(w http.ResponseWriter, r *http.Request, id string) {
 	p := profileFromContext(r.Context())
 	var req goalRequest
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_body", err.Error())
-		return
-	}
-	if req.Name == "" || req.Target <= 0 {
-		writeError(w, http.StatusBadRequest, "invalid_body", "name et target_cents (> 0) requis")
+	if err := decodeJSON(r, &req); err != nil || req.Name == "" || req.Target <= 0 || req.MonthlySavings < 0 {
+		writeError(w, 400, "invalid_goal", "Nom, montant cible positif et épargne non négative requis")
 		return
 	}
 	if req.Icon == "" {
 		req.Icon = "target"
 	}
-	var targetDate *time.Time
+	var date *time.Time
 	if req.TargetDate != "" {
-		t, err := time.Parse(dayLayout, req.TargetDate)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_date", "target_date doit être yyyy-MM-dd")
+		d, err := time.Parse(dayLayout, req.TargetDate)
+		if err != nil || d.Year() < 1900 || d.Year() > parisToday().Year()+100 {
+			writeError(w, 400, "invalid_date", "Échéance civile invalide ou hors horizon de 100 ans")
 			return
 		}
-		targetDate = &t
+		date = &d
 	}
-	var assetID *string
+	var asset *string
 	if req.AssetID != "" {
-		assetID = &req.AssetID
+		asset = &req.AssetID
 	}
-
-	g, err := s.store.CreateGoal(r.Context(), p.ID, req.Name, req.Icon,
-		money.Cents(req.Target), targetDate, assetID)
+	g, err := s.store.SaveGoal(r.Context(), p.ID, id, req.Name, req.Icon, money.Cents(req.Target), date, asset, money.Cents(req.MonthlySavings))
 	if err != nil {
-		s.storeErr(w, err, "create goal")
+		if errors.Is(err, store.ErrInvalid) {
+			writeError(w, 422, "invalid_goal", err.Error())
+			return
+		}
+		s.storeErr(w, err, "save goal")
 		return
 	}
-	writeJSON(w, http.StatusCreated, g)
+	status := http.StatusOK
+	if id == "" {
+		status = http.StatusCreated
+	}
+	writeJSON(w, status, g)
 }
 
 func (s *Server) handleDeleteGoal(w http.ResponseWriter, r *http.Request) {
@@ -312,7 +333,7 @@ type alert struct {
 func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	p := profileFromContext(r.Context())
 	alerts := []alert{}
-	now := time.Now()
+	now := parisToday()
 
 	// 1. Enveloppes dépassées ce mois (EF-053).
 	if statuses, err := s.store.EnvelopeStatuses(r.Context(), p.ID, now.Year(), now.Month()); err == nil {
@@ -335,9 +356,27 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 			for _, f := range flows {
 				keys = append(keys, f.MerchantKey)
 			}
-			daily, _ := s.store.AvgDailyVariableSpend(r.Context(), p.ID, keys)
-			today := now.Truncate(24 * time.Hour)
-			proj := engine.ProjectCash(cash, flows, today, today.AddDate(0, 0, 30), daily)
+			manualKeys, err := s.store.CalendarMerchantKeys(r.Context(), p.ID)
+			if err != nil {
+				s.storeErr(w, err, "calendar alerts")
+				return
+			}
+			keys = append(keys, manualKeys...)
+			daily, err := s.store.AvgDailyVariableSpend(r.Context(), p.ID, keys)
+			if err != nil {
+				s.storeErr(w, err, "calendar alerts spending")
+				return
+			}
+			today := parisToday()
+			proj, err := engine.ProjectCash(cash, flows, today, today.AddDate(0, 0, 30), daily)
+			if err != nil {
+				s.storeErr(w, err, "cash alert projection")
+				return
+			}
+			if err := s.addCalendarFlows(r, p.ID, today, &proj); err != nil {
+				s.storeErr(w, err, "calendar alerts projection")
+				return
+			}
 			if proj.EndCash < 0 {
 				alerts = append(alerts, alert{
 					Kind:     "low_cash",
@@ -363,6 +402,17 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// 4. Seuils personnalisés (P8) — évalués par le même moteur que le push.
+	if s.jobs != nil {
+		if triggered, err := s.jobs.EvaluateCustomAlerts(r.Context(), p.ID); err == nil {
+			for _, t := range triggered {
+				alerts = append(alerts, alert{
+					Kind: t.Kind, Severity: t.Severity, Title: t.Title, Detail: t.Detail,
+				})
+			}
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{"alerts": alerts})
 }
 
@@ -373,7 +423,7 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
 	p := profileFromContext(r.Context())
 
-	now := time.Now()
+	now := parisToday()
 	year, month := now.Year(), now.Month()
 	if raw := r.URL.Query().Get("year"); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil {
@@ -409,12 +459,12 @@ func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"year":            year,
-		"month":           int(month),
-		"summary":         summary,
-		"previous":        prevSummary,
-		"categories":      categories,
-		"top_merchants":   merchants,
+		"year":          year,
+		"month":         int(month),
+		"summary":       summary,
+		"previous":      prevSummary,
+		"categories":    categories,
+		"top_merchants": merchants,
 	})
 }
 
@@ -457,39 +507,62 @@ func (s *Server) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var out []subscriptionStatus
-	var totalMonthly int64
+	out := []subscriptionStatus{}
+	var totalMonthly money.Cents
 	for _, f := range flows {
 		if !f.Active || f.Amount >= 0 || f.IntervalDays <= 0 {
 			continue
 		}
-		monthly := -int64(f.Amount) * 30 / int64(f.IntervalDays)
+		monthly, e := scaleCents(f.Amount, -30, int64(f.IntervalDays))
+		if e != nil {
+			s.storeErr(w, e, "subscription monthly")
+			return
+		}
+		yearly, e := scaleCents(monthly, 12, 1)
+		if e != nil {
+			s.storeErr(w, e, "subscription yearly")
+			return
+		}
 		st := subscriptionStatus{
 			RecurringFlow: f,
 			MonthlyCost:   money.Cents(monthly),
-			YearlyCost:    money.Cents(monthly * 12),
+			YearlyCost:    yearly,
 		}
 		// Résilier = épargner `monthly` de plus ET dépenser autant de moins.
 		if baseReached && snap.MonthlyExpenses > money.Cents(monthly) {
+			savingsAfter, e := money.Add(snap.MonthlySavings, monthly)
+			if e != nil {
+				s.storeErr(w, e, "subscription savings")
+				return
+			}
 			if after, err := engine.ComputeIndependence(
 				snap.NetWorth,
-				snap.MonthlySavings+money.Cents(monthly),
+				savingsAfter,
 				snap.MonthlyExpenses-money.Cents(monthly),
 				twinReturnBps, twinSwrBps,
 			); err == nil && after.Reached && baseMonths > after.Months {
 				st.FreedomGainMonths = baseMonths - after.Months
 			}
 		}
-		totalMonthly += monthly
+		totalMonthly, e = money.Add(totalMonthly, monthly)
+		if e != nil {
+			s.storeErr(w, e, "subscriptions sum")
+			return
+		}
 		out = append(out, st)
 	}
 
 	// Les plus chers d'abord.
 	sort.Slice(out, func(i, j int) bool { return out[i].MonthlyCost > out[j].MonthlyCost })
+	totalYearly, e := scaleCents(totalMonthly, 12, 1)
+	if e != nil {
+		s.storeErr(w, e, "subscriptions yearly")
+		return
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"subscriptions":       out,
 		"total_monthly_cents": totalMonthly,
-		"total_yearly_cents":  totalMonthly * 12,
+		"total_yearly_cents":  totalYearly,
 	})
 }

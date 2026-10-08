@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 )
 
@@ -16,9 +17,9 @@ type fakeProvider struct {
 	gotPrompt string
 }
 
-func (f *fakeProvider) Name() string                    { return f.name }
-func (f *fakeProvider) Tier() string                    { return f.tier }
-func (f *fakeProvider) Available(context.Context) bool  { return f.available }
+func (f *fakeProvider) Name() string                   { return f.name }
+func (f *fakeProvider) Tier() string                   { return f.tier }
+func (f *fakeProvider) Available(context.Context) bool { return f.available }
 func (f *fakeProvider) Generate(_ context.Context, _, prompt string, _ int) (string, error) {
 	f.gotPrompt = prompt
 	if f.fail {
@@ -31,10 +32,10 @@ func testLogger() *slog.Logger { return slog.New(slog.DiscardHandler) }
 
 func req(allowCloud bool) Request {
 	return Request{
-		Task:             "test",
-		Prompt:           "PROMPT-COMPLET montants exacts 42300",
-		AnonymizedPrompt: "PROMPT-ANONYMISÉ cash 42k",
-		AllowCloud:       allowCloud,
+		Task:       "test",
+		Prompt:     "PROMPT-COMPLET montants exacts 42300",
+		CloudFacts: &CloudFacts{Intent: "overview", CashThousands: 42},
+		AllowCloud: allowCloud,
 	}
 }
 
@@ -72,7 +73,7 @@ func TestRouterCascadesToCloudAnonymizedOnly(t *testing.T) {
 		t.Fatalf("attendu n3, obtenu %q", resp.Tier)
 	}
 	// GARDE-FOU EIA-031/033 : le cloud ne reçoit QUE la version anonymisée.
-	if cloud.gotPrompt != "PROMPT-ANONYMISÉ cash 42k" {
+	if !strings.Contains(cloud.gotPrompt, `"cash_thousands_eur":42`) {
 		t.Fatalf("le cloud doit recevoir le prompt anonymisé, reçu %q", cloud.gotPrompt)
 	}
 }
@@ -90,13 +91,13 @@ func TestRouterCloudRequiresConsent(t *testing.T) {
 	}
 }
 
-func TestRouterCloudRequiresAnonymizedPrompt(t *testing.T) {
+func TestRouterCloudRequiresStructuredFacts(t *testing.T) {
 	cloud := &fakeProvider{name: "anthropic", tier: TierCloud, available: true}
 	r := NewRouter(nil, cloud, testLogger())
 
 	// Pas de variante anonymisée = interdit de cloud (EIA-032).
 	request := req(true)
-	request.AnonymizedPrompt = ""
+	request.CloudFacts = nil
 	if _, err := r.Explain(context.Background(), request); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("attendu ErrUnavailable, obtenu %v", err)
 	}

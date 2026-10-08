@@ -2,30 +2,63 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/opale-app/opale/internal/money"
 	"github.com/opale-app/opale/internal/store"
 )
 
 // storeErr mappe une erreur du store vers une réponse HTTP.
 func (s *Server) storeErr(w http.ResponseWriter, err error, action string) {
+	if errors.Is(err, store.ErrHistoryRequired) {
+		writeError(w, 409, "history_required", "Archiver ou supprimer les mouvements liés avant de supprimer cet actif.")
+		return
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "ressource introuvable")
 		return
 	}
-	s.log.Error(action, "err", err)
+	if errors.Is(err, store.ErrInvalid) || errors.Is(err, money.ErrOverflow) {
+		writeError(w, 422, "invalid_reference_or_state", "Référence, état ou montant hors limites")
+		return
+	}
+	if errors.Is(err, store.ErrImportAmbiguous) {
+		writeError(w, 409, "import_reconciliation_required", "Le fichier pourrait recréer une ancienne opération ventilée. Vérifie les mouvements de même date et libellé, puis utilise un export OFX avec identifiants stables ou distingue les libellés si ce sont réellement de nouvelles opérations. Aucun mouvement importé.")
+		return
+	}
+	var pg *pgconn.PgError
+	if errors.As(err, &pg) {
+		switch pg.Code {
+		case "23503":
+			writeError(w, 404, "not_found", "ressource référencée indisponible")
+			return
+		case "23505":
+			writeError(w, 409, "conflict", "cette donnée existe déjà")
+			return
+		case "23514", "22023", "22003", "22P02", "22008":
+			writeError(w, 422, "invalid_data", "donnée hors limites, devise non prise en charge ou taux daté manquant")
+			return
+		}
+		s.log.Error(action, "sqlstate", pg.Code)
+	} else {
+		s.log.Error(action, "error_type", fmt.Sprintf("%T", err))
+	}
 	writeError(w, http.StatusInternalServerError, "internal", "erreur interne")
 }
 
 type assetRequest struct {
-	Name     string `json:"name"`
-	Kind     string `json:"kind"`
-	Currency string `json:"currency"`
-	Note     string `json:"note"`
+	InitialValue *int64 `json:"initial_value_cents"`
+	InitialDay   string `json:"initial_as_of"`
+	RequestID    string `json:"client_request_id"`
+	Name         string `json:"name"`
+	Kind         string `json:"kind"`
+	Currency     string `json:"currency"`
+	Note         string `json:"note"`
 }
 
 func (s *Server) handleCreateAsset(w http.ResponseWriter, r *http.Request) {
@@ -50,7 +83,12 @@ func (s *Server) handleCreateAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	p := profileFromContext(r.Context())
-	asset, err := s.store.CreateAsset(r.Context(), p.ID, req.Name, req.Kind, currency, req.Note)
+	day, e := time.Parse(dayLayout, req.InitialDay)
+	if req.InitialValue != nil && e != nil {
+		writeError(w, 400, "invalid_date", "date de valorisation initiale requise")
+		return
+	}
+	asset, err := s.store.CreateFundedAsset(r.Context(), p.ID, req.Name, req.Kind, currency, req.Note, req.RequestID, req.InitialValue, day, false)
 	if err != nil {
 		s.storeErr(w, err, "create asset")
 		return
@@ -156,7 +194,7 @@ func (s *Server) parseValuation(w http.ResponseWriter, r *http.Request) (valuati
 		writeError(w, http.StatusBadRequest, "invalid_value", "la valeur doit être positive (centimes)")
 		return req, time.Time{}, false
 	}
-	asOf := time.Now().UTC().Truncate(24 * time.Hour)
+	asOf := parisToday()
 	if req.AsOf != "" {
 		t, err := time.Parse("2006-01-02", req.AsOf)
 		if err != nil {

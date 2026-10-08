@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// Cache disque (mode hors-ligne) : le dernier état connu de chaque écran,
 /// par profil. L'app s'ouvre instantanément sur ces données puis rafraîchit ;
@@ -21,14 +22,14 @@ nonisolated enum DiskCache {
 
 	private static func url(_ key: String) -> URL {
 		// Clé assainie pour le nom de fichier.
-		let safe = key.replacingOccurrences(of: "/", with: "_")
+		let safe = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
 		return directory.appendingPathComponent(safe + ".json")
 	}
 
 	static func save<T: Codable>(_ value: T, key: String) {
 		let stamped = Stamped(value: value, at: .now)
 		guard let data = try? JSONEncoder().encode(stamped) else { return }
-		try? data.write(to: url(key), options: .atomic)
+		try? data.write(to: url(key), options: [.atomic, .completeFileProtection])
 	}
 
 	static func load<T: Codable>(_ type: T.Type, key: String) -> Stamped<T>? {

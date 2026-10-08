@@ -10,6 +10,7 @@ import (
 	"encoding/csv"
 	"errors"
 	"fmt"
+	"golang.org/x/text/encoding/charmap"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -19,6 +20,7 @@ import (
 
 // Row — une ligne de relevé prête à insérer.
 type Row struct {
+	SourceID   string
 	OccurredOn time.Time
 	Amount     money.Cents // signé : + crédit, − débit
 	RawLabel   string
@@ -32,7 +34,11 @@ var dateLayouts = []string{
 }
 
 // Parse lit un export CSV bancaire complet.
-func Parse(data string) ([]Row, error) {
+func Parse(data string) ([]Row, error) { return ParseCurrency(data, 2) }
+func ParseCurrency(data string, exponent int) ([]Row, error) {
+	if len(data) > 5<<20 {
+		return nil, fmt.Errorf("csvimport: fichier supérieur à 5 Mio")
+	}
 	data = ensureUTF8(data)
 	data = strings.TrimPrefix(data, "\uFEFF") // BOM UTF-8
 
@@ -52,7 +58,7 @@ func Parse(data string) ([]Row, error) {
 	r := csv.NewReader(strings.NewReader(body))
 	r.Comma = delim
 	r.FieldsPerRecord = -1 // lignes irrégulières tolérées
-	r.LazyQuotes = true
+	r.LazyQuotes = false
 
 	records, err := r.ReadAll()
 	if err != nil {
@@ -68,11 +74,16 @@ func Parse(data string) ([]Row, error) {
 	}
 
 	var rows []Row
-	for _, rec := range records {
-		row, ok := parseRecord(rec, cols)
+	for i, rec := range records {
+		row, ok := parseRecord(rec, cols, exponent)
 		if ok {
 			rows = append(rows, row)
+		} else {
+			return nil, fmt.Errorf("csvimport: ligne %d invalide (date, libellé ou montant) : aucun mouvement importé", i+start+2)
 		}
+	}
+	if len(rows) > 10000 {
+		return nil, fmt.Errorf("csvimport: maximum 10000 mouvements par fichier, aucun import effectué")
 	}
 	if len(rows) == 0 {
 		return nil, ErrEmpty
@@ -119,7 +130,7 @@ func mapColumns(header []string) (columns, bool) {
 	return c, true
 }
 
-func parseRecord(rec []string, c columns) (Row, bool) {
+func parseRecord(rec []string, c columns, exponent int) (Row, bool) {
 	get := func(i int) string {
 		if i < 0 || i >= len(rec) {
 			return ""
@@ -140,7 +151,7 @@ func parseRecord(rec []string, c columns) (Row, bool) {
 	var amount money.Cents
 	switch {
 	case c.amount >= 0 && get(c.amount) != "":
-		v, err := parseAmount(get(c.amount))
+		v, err := parseAmount(get(c.amount), exponent)
 		if err != nil {
 			return Row{}, false
 		}
@@ -148,14 +159,14 @@ func parseRecord(rec []string, c columns) (Row, bool) {
 	case c.debit >= 0 || c.credit >= 0:
 		// Colonnes séparées : débit compté négatif, crédit positif.
 		if d := get(c.debit); d != "" {
-			v, err := parseAmount(d)
+			v, err := parseAmount(d, exponent)
 			if err != nil {
 				return Row{}, false
 			}
 			amount = -money.Cents(abs(int64(v)))
 		}
 		if cr := get(c.credit); cr != "" {
-			v, err := parseAmount(cr)
+			v, err := parseAmount(cr, exponent)
 			if err != nil {
 				return Row{}, false
 			}
@@ -181,11 +192,11 @@ func parseDate(s string) (time.Time, bool) {
 }
 
 // parseAmount : « -1 234,56 € » → centimes, sans float (money.Parse).
-func parseAmount(s string) (money.Cents, error) {
+func parseAmount(s string, exponent int) (money.Cents, error) {
 	s = strings.NewReplacer(
 		"€", "", " ", "", " ", "", " ", "", "+", "",
 	).Replace(strings.TrimSpace(s))
-	return money.Parse(s)
+	return money.ParseMinor(s, exponent)
 }
 
 func detectDelimiter(line string) rune {
@@ -232,11 +243,8 @@ func ensureUTF8(s string) string {
 	if utf8.ValidString(s) {
 		return s
 	}
-	out := make([]rune, 0, len(s))
-	for _, b := range []byte(s) {
-		out = append(out, rune(b))
-	}
-	return string(out)
+	out, _ := charmap.Windows1252.NewDecoder().String(s)
+	return out
 }
 
 func abs(v int64) int64 {

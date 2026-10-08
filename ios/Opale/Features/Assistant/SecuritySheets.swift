@@ -14,10 +14,12 @@ struct AccessLogSheet: View {
 
     @State private var events: [AccessEvent] = []
     @State private var loaded = false
+    @State private var errorMessage: String?
 
     var body: some View {
         NavigationStack {
             List {
+                if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
                 if loaded && events.isEmpty {
                     ContentUnavailableView(
                         "Journal vide",
@@ -34,7 +36,7 @@ struct AccessLogSheet: View {
                             Text(e.label)
                                 .font(.subheadline.weight(.medium))
                             HStack(spacing: 6) {
-                                Text(e.at.formatted(.dateTime.day().month(.abbreviated).hour().minute()))
+                                Text(e.at.opaleFormatted(.dateTime.day().month(.abbreviated).hour().minute()))
                                 if !e.detail.isEmpty {
                                     Text("· \(e.detail)").lineLimit(1)
                                 }
@@ -53,7 +55,7 @@ struct AccessLogSheet: View {
                 }
             }
             .task {
-                events = (try? await session.api.accessLog()) ?? []
+                do { events = try await session.api.accessLog(); errorMessage = nil } catch { errorMessage = error.localizedDescription }
                 loaded = true
             }
         }

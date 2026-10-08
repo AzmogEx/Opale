@@ -113,7 +113,7 @@ struct SubscriptionsView: View {
 						Text(sub.label)
 							.font(.body.weight(.semibold))
 							.lineLimit(1)
-						Text("\(periodicityLabel(sub.periodicity)) · prochain le \(sub.nextDate.formatted(.dateTime.day().month(.abbreviated)))")
+						Text("\(periodicityLabel(sub.periodicity)) · prochain le \(sub.nextDate.opaleFormatted(.dateTime.day().month(.abbreviated)))")
 							.font(.caption)
 							.foregroundStyle(.secondary)
 					}
@@ -138,6 +138,7 @@ struct SubscriptionsView: View {
 							.foregroundStyle(.secondary)
 					} else {
 						Text("Soit \(MoneyFormat.eurosWhole(sub.yearlyCost)) par an qui ne s'investissent pas")
+          .sensitive()
 							.font(.caption)
 							.foregroundStyle(.secondary)
 					}

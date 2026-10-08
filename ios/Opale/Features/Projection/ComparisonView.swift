@@ -9,9 +9,9 @@ struct ComparisonView: View {
     @Environment(\.dismiss) private var dismiss
 
     // Scénario A prérempli avec les hypothèses de l'onglet Projection.
-    @AppStorage("projection.savingsEuros") private var baseSavings = 500
-    @AppStorage("projection.expensesEuros") private var baseExpenses = 2000
-    @AppStorage("projection.returnBps") private var baseReturn = 500
+    @State private var baseSavings = 500
+    @State private var baseExpenses = 2000
+    @State private var baseReturn = 500
 
     @State private var a = ScenarioForm(label: "Aujourd'hui")
     @State private var b = ScenarioForm(label: "Alternative")
@@ -19,7 +19,7 @@ struct ComparisonView: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
     // Comparaisons enregistrées (EF-044+) — persistées sur l'appareil.
-    @State private var saved: [SavedComparison] = SavedComparison.all()
+    @State private var saved: [SavedComparison] = []
     @State private var askName = false
     @State private var newName = ""
 
@@ -30,15 +30,15 @@ struct ComparisonView: View {
         var b: ScenarioForm
 
         static let key = "comparisons.saved"
-        static func all() -> [SavedComparison] {
-            guard let data = UserDefaults.standard.data(forKey: key),
+        static func all(scope: String) -> [SavedComparison] {
+            guard let data = UserDefaults.standard.data(forKey: key + scope),
                   let list = try? JSONDecoder().decode([SavedComparison].self, from: data)
             else { return [] }
             return list
         }
-        static func persist(_ list: [SavedComparison]) {
+        static func persist(_ list: [SavedComparison], scope: String) {
             if let data = try? JSONEncoder().encode(list) {
-                UserDefaults.standard.set(data, forKey: key)
+                UserDefaults.standard.set(data, forKey: key + scope)
             }
         }
     }
@@ -71,7 +71,7 @@ struct ComparisonView: View {
 
                     if let result {
                         verdictCard(result)
-                        chartCard(result)
+                        chartCard(result).sensitive()
                     }
                 }
                 .padding()
@@ -103,7 +103,7 @@ struct ComparisonView: View {
                             }
                             Button(role: .destructive) {
                                 saved = []
-                                SavedComparison.persist([])
+                                SavedComparison.persist([], scope: session.profileKey)
                             } label: {
                                 Label("Tout effacer", systemImage: "trash")
                             }
@@ -117,11 +117,15 @@ struct ComparisonView: View {
                 TextField("Ex. Louer vs acheter", text: $newName)
                 Button("Enregistrer") {
                     saved.append(SavedComparison(name: newName, a: a, b: b))
-                    SavedComparison.persist(saved)
+                    SavedComparison.persist(saved, scope: session.profileKey)
                 }
                 Button("Annuler", role: .cancel) {}
             }
             .onAppear {
+                saved = SavedComparison.all(scope: session.profileKey)
+                baseSavings = session.preferenceInt("projection.savings", default: 500)
+                baseExpenses = session.preferenceInt("projection.expenses", default: 2000)
+                baseReturn = session.preferenceInt("projection.return", default: 500)
                 a.savings = baseSavings
                 a.expenses = baseExpenses
                 b.savings = baseSavings

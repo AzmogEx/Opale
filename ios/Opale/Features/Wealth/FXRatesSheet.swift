@@ -1,8 +1,6 @@
 import SwiftUI
 
-/// Devises & taux (EF-008) : taux de change manuels — aucune API externe,
-/// la confidentialité d'abord. 1 unité de devise = X euros ; les actifs en
-/// devise sans taux sont comptés 1:1 dans le patrimoine (et signalés ici).
+/// Taux manuels datés, prioritaires sur les taux de référence.
 struct FXRatesSheet: View {
     var onChanged: () -> Void
 
@@ -13,6 +11,14 @@ struct FXRatesSheet: View {
     @State private var unrated: [String] = []
     @State private var newCurrency = "USD"
     @State private var newRateText = ""
+    @State private var asOf = Date.now
+    @State private var busy = false
+    private var parsedRate: Int64? {
+        let text = newRateText.replacingOccurrences(of: ",", with: ".")
+        guard text.range(of: #"^[0-9]+(\.[0-9]{1,6})?$"#, options: .regularExpression) != nil,
+              let value = Decimal(string: text), value > 0, value <= Decimal(Int64.max) / 1_000_000 else { return nil }
+        return NSDecimalNumber(decimal: value * 1_000_000).int64Value
+    }
     @State private var errorMessage: String?
 
     var body: some View {
@@ -21,7 +27,7 @@ struct FXRatesSheet: View {
                 if !unrated.isEmpty {
                     Section {
                         Label {
-                            Text("Sans taux, ces devises sont comptées 1 pour 1 dans ton patrimoine : \(unrated.joined(separator: ", "))")
+                            Text("Un taux applicable est nécessaire pour calculer les totaux de ces devises : \(unrated.joined(separator: ", "))")
                                 .font(.subheadline)
                         } icon: {
                             Image(systemName: "exclamationmark.triangle.fill")
@@ -32,22 +38,21 @@ struct FXRatesSheet: View {
 
                 Section("Taux enregistrés") {
                     if rates.isEmpty {
-                        Text("Aucun taux — tout est en euros.")
+                        Text("Aucun taux enregistré.")
                             .foregroundStyle(.secondary)
                     }
                     ForEach(rates) { rate in
                         LabeledContent("1 \(rate.currency)") {
-                            Text(Self.euroLabel(rate.rateMicro))
-                                .fontWeight(.semibold)
+                            Text(Self.euroLabel(rate.rateMicro)).fontWeight(.semibold)
+                        }
+                        Text("Au \(rate.asOf ?? "—") · source : \(rate.source ?? "manuelle")").font(.caption)
+                        Button("Modifier ce taux") { newCurrency = rate.currency; newRateText = NSDecimalNumber(decimal: Decimal(rate.rateMicro) / 1_000_000).stringValue; asOf = rate.asOf.flatMap(Date.fromOpaleDay) ?? .now
                         }
                     }
                     .onDelete { indexSet in
                         Task {
-                            for i in indexSet {
-                                try? await session.api.deleteFXRate(currency: rates[i].currency)
-                            }
-                            await load()
-                            onChanged()
+                            do { for i in indexSet { try await session.api.deleteFXRate(currency: rates[i].currency) }; await load(); session.changed(); onChanged() }
+                            catch { errorMessage = error.localizedDescription }
                         }
                     }
                 }
@@ -60,14 +65,15 @@ struct FXRatesSheet: View {
                     }
                     TextField("Valeur d'1 \(newCurrency) en euros (ex. 0,92)", text: $newRateText)
                         .keyboardType(.decimalPad)
+                    DatePicker("Date du taux", selection: $asOf, in: ...Date.now, displayedComponents: .date)
                     Button("Enregistrer le taux") {
                         Task { await save() }
                     }
-                    .disabled(Cents.parse(newRateText) == nil)
+                    .disabled(parsedRate == nil || busy)
                 } header: {
                     Text("Nouveau taux")
                 } footer: {
-                    Text("Saisie manuelle et privée : Opale n'appelle aucun service de change. Pense à rafraîchir de temps en temps.")
+                    Text("Unité : 1 devise = X euros (six décimales maximum). Le taux manuel s’applique à partir de sa date ; les cours automatiques peuvent compléter les taux de référence si activés sur le serveur.")
                 }
 
                 if let errorMessage {
@@ -94,26 +100,22 @@ struct FXRatesSheet: View {
 
     /// « 0,92 € » depuis des micro-euros.
     private static func euroLabel(_ rateMicro: Int64) -> String {
-        let euros = rateMicro / 1_000_000
-        let frac = (rateMicro % 1_000_000) / 10_000 // 2 décimales
-        return String(format: "%d,%02d €", euros, frac)
+        NSDecimalNumber(decimal: Decimal(rateMicro) / 1_000_000).stringValue + " €"
     }
 
     private func load() async {
-        if let result = try? await session.api.fxRates() {
-            rates = result.rates
-            unrated = result.unrated
-        }
+        do { let result = try await session.api.fxRates(); rates = result.rates; unrated = result.unrated; errorMessage = nil }
+        catch { errorMessage = error.localizedDescription }
     }
 
     private func save() async {
-        // Le taux saisi en euros (ex. « 0,92 ») devient des micro-euros via
-        // Cents.parse (entier, pas de float) : centimes × 10 000.
-        guard let cents = Cents.parse(newRateText), cents.raw > 0 else { return }
+        guard let micro = parsedRate else { return }
+        busy = true; defer { busy = false }
         do {
-            try await session.api.upsertFXRate(currency: newCurrency, rateMicro: cents.raw * 10_000)
+            try await session.api.upsertFXRate(currency: newCurrency, rateMicro: micro, asOf: asOf.opaleDayString)
             newRateText = ""
             await load()
+            session.changed()
             onChanged()
         } catch {
             errorMessage = error.localizedDescription

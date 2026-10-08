@@ -28,7 +28,7 @@ func (s *Store) ProfileForSession(ctx context.Context, tokenHash string) (Profil
 		SELECT p.id, p.name, p.privacy_default, p.created_at, p.updated_at
 		FROM sessions s
 		JOIN profiles p ON p.id = s.profile_id
-		WHERE s.token_hash = $1 AND s.expires_at > now()`, tokenHash,
+		WHERE s.token_hash = $1 AND s.expires_at > now() AND p.demo_ready AND (NOT p.is_demo OR p.demo_expires_at>now())`, tokenHash,
 	).Scan(&p.ID, &p.Name, &p.PrivacyDefault, &p.CreatedAt, &p.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Profile{}, ErrNotFound

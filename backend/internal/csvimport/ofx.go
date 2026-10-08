@@ -23,7 +23,12 @@ func IsOFX(content string) bool {
 }
 
 // ParseOFX extrait les mouvements d'un relevé OFX.
-func ParseOFX(content string) ([]Row, error) {
+func ParseOFX(content string) ([]Row, error) { return ParseOFXCurrency(content, 2) }
+func ParseOFXCurrency(content string, exponent int) ([]Row, error) {
+	if len(content) > 5<<20 {
+		return nil, fmt.Errorf("ofx: fichier supérieur à 5 Mio")
+	}
+	content = ensureUTF8(content)
 	upper := strings.ToUpper(content)
 
 	var rows []Row
@@ -55,10 +60,10 @@ func ParseOFX(content string) ([]Row, error) {
 			label = ofxField(block, "MEMO")
 		}
 		if amountRaw == "" || dateRaw == "" {
-			continue
+			return nil, fmt.Errorf("ofx: mouvement %d incomplet, aucun import effectué", len(rows)+1)
 		}
 
-		amount, err := money.Parse(amountRaw)
+		amount, err := money.ParseMinor(amountRaw, exponent)
 		if err != nil {
 			return nil, fmt.Errorf("ofx: montant illisible %q : %w", amountRaw, err)
 		}
@@ -74,9 +79,12 @@ func ParseOFX(content string) ([]Row, error) {
 			label = "Mouvement bancaire"
 		}
 
-		rows = append(rows, Row{Amount: amount, OccurredOn: day, RawLabel: label})
+		rows = append(rows, Row{SourceID: ofxField(block, "FITID"), Amount: amount, OccurredOn: day, RawLabel: label})
 	}
 
+	if len(rows) > 10000 {
+		return nil, fmt.Errorf("ofx: maximum 10000 mouvements, aucun import effectué")
+	}
 	if len(rows) == 0 {
 		return nil, fmt.Errorf("ofx: aucun mouvement <STMTTRN> trouvé")
 	}

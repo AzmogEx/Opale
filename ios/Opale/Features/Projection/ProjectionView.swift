@@ -10,9 +10,10 @@ struct ProjectionView: View {
     @Environment(SessionStore.self) private var session
 
     // Hypothèses persistées sur l'appareil (en euros entiers / bps).
-    @AppStorage("projection.savingsEuros") private var savingsEuros = 500
-    @AppStorage("projection.returnBps") private var returnBps = 500
-    @AppStorage("projection.expensesEuros") private var expensesEuros = 2000
+    @State private var savingsEuros = 500
+    @State private var returnBps = 500
+    @State private var expensesEuros = 2000
+    @State private var inflationBps = 0
 
     @State private var result: ProjectionResponse?
     @State private var errorMessage: String?
@@ -27,9 +28,9 @@ struct ProjectionView: View {
                     GlassEffectContainer(spacing: 16) {
                         VStack(spacing: 16) {
                             if let result {
-                                independenceCard(result)
+                                independenceCard(result).sensitive()
                                     .cascadeIn(0)
-                                projectionChartCard(result)
+                                projectionChartCard(result).sensitive()
                                     .cascadeIn(1)
                             } else if let errorMessage {
                                 ContentUnavailableView(
@@ -68,7 +69,13 @@ struct ProjectionView: View {
             }
             // Recharge à chaque changement d'hypothèse (annule la requête
             // précédente automatiquement).
-            .task(id: "\(savingsEuros)-\(returnBps)-\(expensesEuros)") {
+            .onAppear {
+                savingsEuros = session.preferenceInt("projection.savings", default: 500)
+                returnBps = session.preferenceInt("projection.return", default: 500)
+                expensesEuros = session.preferenceInt("projection.expenses", default: 2000)
+                inflationBps = session.preferenceInt("projection.inflation", default: 0)
+            }
+            .task(id: "\(savingsEuros)-\(returnBps)-\(expensesEuros)-\(inflationBps)-\(session.refreshID)") {
                 await load()
             }
         }
@@ -87,9 +94,8 @@ struct ProjectionView: View {
                     .textCase(.uppercase)
 
                 if independence.reached {
-                    let years = independence.months / 12
-                    let freedomYear = Calendar.current.component(.year, from: .now)
-                        + years
+                    let target = Calendar.opale.date(byAdding: .month, value: independence.months, to: .now) ?? .now
+                    let freedomYear = Calendar.opale.component(.year, from: target)
                     Text(independence.months == 0 ? "Déjà libre 🎉" : "Libre en \(String(freedomYear))")
                         .font(.system(size: 40, weight: .bold, design: .rounded))
                         .foregroundStyle(OpaleTheme.iridescent)
@@ -141,7 +147,7 @@ struct ProjectionView: View {
     private func projectionChartCard(_ result: ProjectionResponse) -> some View {
         GlassCard {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Trajectoire — 30 ans")
+                Text(inflationBps > 0 ? "Trajectoire — euros constants" : "Trajectoire — 30 ans")
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
@@ -208,6 +214,7 @@ struct ProjectionView: View {
                         AxisValueLabel {
                             if let euros = value.as(Double.self) {
                                 Text(Self.compactEuros(euros))
+                                    .sensitive()
                             }
                         }
                     }
@@ -247,6 +254,7 @@ struct ProjectionView: View {
                     range: 0...1200, step: 50,
                     format: { formattedPercent($0) }
                 )
+                assumptionSlider(label: "Inflation", systemImage: "percent", value: $inflationBps, range: 0...1000, step: 25, format: { formattedPercent($0) })
                 assumptionSlider(
                     label: "Dépenses mensuelles",
                     systemImage: "cart.fill",
@@ -299,11 +307,16 @@ struct ProjectionView: View {
     // MARK: - Chargement
 
     private func load() async {
+        session.setPreference(savingsEuros, "projection.savings")
+        session.setPreference(returnBps, "projection.return")
+        session.setPreference(expensesEuros, "projection.expenses")
+        session.setPreference(inflationBps, "projection.inflation")
         do {
             result = try await session.api.projection(
                 monthlySavingsCents: Int64(savingsEuros) * 100,
                 annualReturnBps: returnBps,
-                monthlyExpensesCents: Int64(expensesEuros) * 100
+                monthlyExpensesCents: Int64(expensesEuros) * 100,
+                inflationBps: inflationBps
             )
             errorMessage = nil
         } catch is CancellationError {

@@ -19,9 +19,9 @@ type TxObs struct {
 type RecurringFlow struct {
 	MerchantKey  string      `json:"merchant_key"`
 	Label        string      `json:"label"`
-	Amount       money.Cents `json:"amount_cents"`   // montant type (médiane), signé
-	IntervalDays int         `json:"interval_days"`  // intervalle médian observé
-	Periodicity  string      `json:"periodicity"`    // weekly | monthly | quarterly | yearly
+	Amount       money.Cents `json:"amount_cents"`  // montant type (médiane), signé
+	IntervalDays int         `json:"interval_days"` // intervalle médian observé
+	Periodicity  string      `json:"periodicity"`   // weekly | monthly | quarterly | yearly
 	LastDate     time.Time   `json:"last_date"`
 	NextDate     time.Time   `json:"next_date"`
 	Occurrences  int         `json:"occurrences"`
@@ -57,7 +57,7 @@ func DetectRecurring(txs []TxObs, today time.Time) []RecurringFlow {
 		byMerchant[t.MerchantKey] = append(byMerchant[t.MerchantKey], t)
 	}
 
-	var flows []RecurringFlow
+	flows := []RecurringFlow{}
 	for key, group := range byMerchant {
 		if len(group) < 2 {
 			continue
@@ -113,15 +113,19 @@ func DetectRecurring(txs []TxObs, today time.Time) []RecurringFlow {
 		}
 
 		// Montants stables : chacun à ±25 % de la médiane (comparaison entière).
-		amounts := make([]int64, len(group))
+		amounts := make([]uint64, len(group))
 		for i, t := range group {
 			amounts[i] = absInt64(int64(t.Amount))
 		}
-		medAmount := medianInt64(amounts)
+		medAmount := medianUint64(amounts)
 		stable := true
 		for _, a := range amounts {
 			// |a - med| * 4 > med  ⇔  écart > 25 %
-			if diff := a - medAmount; diff*4 > medAmount || -diff*4 > medAmount {
+			diff := a - medAmount
+			if a < medAmount {
+				diff = medAmount - a
+			}
+			if diff > medAmount/4 {
 				stable = false
 				break
 			}
@@ -135,9 +139,9 @@ func DetectRecurring(txs []TxObs, today time.Time) []RecurringFlow {
 		// Inactif si l'échéance est dépassée de plus d'un demi-intervalle.
 		active := today.Before(next.AddDate(0, 0, med/2))
 
-		signed := medAmount
+		signed := int64(medAmount)
 		if !positive {
-			signed = -signed
+			signed = -int64(medAmount-1) - 1
 		}
 		flows = append(flows, RecurringFlow{
 			MerchantKey:  key,
@@ -164,15 +168,15 @@ func medianInt(v []int) int {
 	return s[len(s)/2]
 }
 
-func medianInt64(v []int64) int64 {
-	s := append([]int64(nil), v...)
+func medianUint64(v []uint64) uint64 {
+	s := append([]uint64(nil), v...)
 	sort.Slice(s, func(i, j int) bool { return s[i] < s[j] })
 	return s[len(s)/2]
 }
 
-func absInt64(v int64) int64 {
+func absInt64(v int64) uint64 {
 	if v < 0 {
-		return -v
+		return uint64(-(v + 1)) + 1
 	}
-	return v
+	return uint64(v)
 }

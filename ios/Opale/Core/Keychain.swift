@@ -8,7 +8,8 @@ import Security
 nonisolated enum Keychain {
     private static let service = "app.opale.ios"
 
-    static func set(_ value: String, forKey key: String) {
+    @discardableResult
+    static func set(_ value: String, forKey key: String) -> Bool {
         let data = Data(value.utf8)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -20,7 +21,7 @@ nonisolated enum Keychain {
         var insert = query
         insert[kSecValueData as String] = data
         insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        SecItemAdd(insert as CFDictionary, nil)
+        return SecItemAdd(insert as CFDictionary, nil) == errSecSuccess
     }
 
     static func get(_ key: String) -> String? {
@@ -36,6 +37,15 @@ nonisolated enum Keychain {
               let data = result as? Data
         else { return nil }
         return String(data: data, encoding: .utf8)
+    }
+
+    /// A credential is never sent to a different configured server.
+    static func sessionToken(forServer server: String) -> String? {
+        struct Binding: Decodable { let server: String }
+        guard let saved = get("session.profile"), let data = saved.data(using: .utf8),
+              let binding = try? JSONDecoder().decode(Binding.self, from: data),
+              binding.server == server else { return nil }
+        return get("session.token")
     }
 
     static func delete(_ key: String) {

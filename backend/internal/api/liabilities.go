@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/opale-app/opale/internal/money"
@@ -31,7 +32,12 @@ func (s *Server) handleCreateLiability(w http.ResponseWriter, r *http.Request) {
 	}
 
 	p := profileFromContext(r.Context())
-	liab, err := s.store.CreateLiability(r.Context(), p.ID, req.Name, req.Kind, currency, req.Note)
+	day, e := time.Parse(dayLayout, req.InitialDay)
+	if req.InitialValue != nil && e != nil {
+		writeError(w, 400, "invalid_date", "date de valorisation initiale requise")
+		return
+	}
+	liab, err := s.store.CreateFundedAsset(r.Context(), p.ID, req.Name, req.Kind, currency, req.Note, req.RequestID, req.InitialValue, day, true)
 	if err != nil {
 		s.storeErr(w, err, "create liability")
 		return

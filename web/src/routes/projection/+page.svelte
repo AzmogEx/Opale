@@ -1,116 +1,101 @@
 <script lang="ts">
-	// Projection (EF-040/041/043) : curseurs d'hypothèses, courbe 30 ans,
-	// date d'indépendance — tout est calculé par le moteur backend.
-	import { session } from '$lib/session.svelte';
-	import { euros, percent } from '$lib/format';
-	import type { Projection } from '$lib/api';
-	import LineChart from '$lib/components/LineChart.svelte';
-
-	// Hypothèses persistées (euros entiers / bps), défauts alignés sur iOS.
-	let savings = $state(Number(localStorage.getItem('proj.savings') ?? 500));
-	let returnBps = $state(Number(localStorage.getItem('proj.return') ?? 500));
-	let expenses = $state(Number(localStorage.getItem('proj.expenses') ?? 2000));
-	let inflationBps = $state(0); // euros constants (EF-043)
-
-	let projection = $state<Projection | null>(null);
-	let error = $state('');
-
-	$effect(() => {
-		localStorage.setItem('proj.savings', String(savings));
-		localStorage.setItem('proj.return', String(returnBps));
-		localStorage.setItem('proj.expenses', String(expenses));
-		const params = {
-			savings: savings * 100,
-			returnBps,
-			expenses: expenses * 100,
-			inflationBps
-		};
-		void session.api
-			.projection(params)
-			.then((p) => ((projection = p), (error = '')))
-			.catch((e) => (error = e instanceof Error ? e.message : String(e)));
-	});
-
-	const freedomYear = $derived.by(() => {
-		if (!projection?.independence.reached) return null;
-		return new Date().getFullYear() + Math.floor(projection.independence.months / 12);
-	});
+	import ProjectionSimulator from '$lib/components/ProjectionSimulator.svelte';
+	import Goals from '$lib/components/Goals.svelte';
+	import Decisions from '$lib/components/Decisions.svelte';
+	import ScenarioComparison from '$lib/components/ScenarioComparison.svelte';
+	import Calculator from '$lib/components/Calculator.svelte';
+	import RemotePanel from '$lib/components/RemotePanel.svelte';
+	import { field } from '$lib/forms';
+	let section = $state('fire');
+	const sections = {
+		fire: 'Indépendance',
+		goals: 'Objectifs',
+		decisions: 'Décisions',
+		scenarios: 'Scénarios',
+		loan: 'Crédit',
+		tax: 'Fiscalité et PER',
+		timeline: 'Chronologie'
+	};
 </script>
 
-<h1 class="mb-5 text-2xl font-bold tracking-tight">Projection</h1>
-
-{#if error}
-	<div class="glass border-loss/40 mb-4 p-4 text-sm">{error}</div>
-{/if}
-
-{#if projection}
-	<div class="grid gap-5">
-		<!-- Indépendance financière (EF-040) -->
-		<section class="glass p-6 md:p-8">
-			<p class="text-xs font-semibold text-neutral-500 uppercase">
-				Indépendance financière {inflationBps > 0 ? '· euros constants' : ''}
-			</p>
-			{#if projection.independence.reached}
-				<p class="iridescent mt-1 text-4xl font-extrabold md:text-5xl">
-					{projection.independence.months === 0 ? 'Déjà libre 🎉' : `Libre en ${freedomYear}`}
-				</p>
-				{#if projection.independence.months > 0}
-					<p class="mt-1 text-sm text-neutral-500">
-						dans {Math.floor(projection.independence.months / 12)} ans et {projection
-							.independence.months % 12} mois
-					</p>
-				{/if}
-			{:else}
-				<p class="mt-1 text-3xl font-bold text-neutral-400">Hors d'atteinte</p>
-				<p class="mt-1 text-sm text-neutral-500">
-					Augmente l'épargne ou réduis les dépenses pour rejoindre la cible.
-				</p>
-			{/if}
-			<p class="mt-2 text-xs text-neutral-500">
-				Cible : <span class="amount">{euros(projection.independence.target_cents)}</span> (retrait 4 %)
-			</p>
-
-			<div class="mt-6">
-				<LineChart
-					points={projection.points.map((p) => p.net_cents)}
-					target={projection.independence.target_cents}
-					labels={['aujourd’hui', '30 ans']}
-					height={220}
-				/>
-			</div>
-		</section>
-
-		<!-- Hypothèses -->
-		<section class="glass grid gap-6 p-6 md:grid-cols-2">
-			<label class="block">
-				<span class="flex justify-between text-sm font-medium">
-					Épargne mensuelle <strong class="text-accent amount">{savings} €</strong>
-				</span>
-				<input type="range" min="0" max="5000" step="50" bind:value={savings} class="accent-accent w-full" />
-			</label>
-			<label class="block">
-				<span class="flex justify-between text-sm font-medium">
-					Rendement annuel <strong class="text-accent">{percent(returnBps)}</strong>
-				</span>
-				<input type="range" min="0" max="1200" step="50" bind:value={returnBps} class="accent-accent w-full" />
-			</label>
-			<label class="block">
-				<span class="flex justify-between text-sm font-medium">
-					Dépenses mensuelles <strong class="text-accent amount">{expenses} €</strong>
-				</span>
-				<input type="range" min="500" max="10000" step="100" bind:value={expenses} class="accent-accent w-full" />
-			</label>
-			<label class="block">
-				<span class="flex justify-between text-sm font-medium">
-					Inflation (euros constants) <strong class="text-accent">{percent(inflationBps)}</strong>
-				</span>
-				<input type="range" min="0" max="500" step="25" bind:value={inflationBps} class="accent-accent w-full" />
-				<span class="text-xs text-neutral-400">
-					{inflationBps > 0 ? 'La courbe est en pouvoir d’achat d’aujourd’hui.' : 'À 0, la courbe est en euros courants.'}
-				</span>
-			</label>
-		</section>
-	</div>
-{:else if !error}
-	<div class="glass animate-pulse p-8 text-sm text-neutral-500">Le moteur projette…</div>
-{/if}
+<svelte:head><title>Projection · Opale</title></svelte:head>
+<h1>Projection</h1>
+<div class="tabstrip" aria-label="Sections projection">
+	{#each Object.entries(sections) as [key, label]}<button
+			aria-pressed={section === key}
+			onclick={() => (section = key)}>{label}</button
+		>{/each}
+</div>
+<div class="stack">
+	{#key section}{#if section === 'fire'}<ProjectionSimulator />{:else if section === 'goals'}<Goals
+			/>{:else if section === 'decisions'}<Decisions
+			/>{:else if section === 'scenarios'}<ScenarioComparison
+			/>{:else if section === 'loan'}<Calculator
+				title="Simuler un crédit"
+				path="/v1/loan/simulate"
+				description="Crédit à taux fixe, hors assurance et frais. Consulte l’échéancier pour distinguer intérêts et remboursement du capital."
+				fields={[
+					field('principal_cents', 'Capital emprunté (EUR)', 'money', {
+						required: true,
+						default: 20000000
+					}),
+					field('annual_rate_bps', 'Taux annuel (%)', 'percent', { required: true, default: 350 }),
+					field('months', 'Durée (mois)', 'number', {
+						required: true,
+						default: 240,
+						min: 1,
+						max: 600
+					})
+				]}
+			/><Calculator
+				title="Capacité d’emprunt"
+				path="/v1/loan/capacity"
+				description="Capital finançable pour la mensualité choisie ; ce calcul ne constitue pas un accord bancaire."
+				fields={[
+					field('monthly_payment_cents', 'Mensualité disponible (EUR)', 'money', {
+						required: true,
+						default: 100000
+					}),
+					field('annual_rate_bps', 'Taux annuel (%)', 'percent', { required: true, default: 350 }),
+					field('months', 'Durée (mois)', 'number', {
+						required: true,
+						default: 240,
+						min: 1,
+						max: 600
+					})
+				]}
+			/>{:else if section === 'tax'}<Calculator
+				title="Impôt sur le revenu et effet du PER"
+				path="/v1/tax/estimate"
+				method="GET"
+				description="Estimation indicative selon le millésime et les limites renvoyés par le moteur. Les réductions, crédits d’impôt et situations particulières peuvent modifier le résultat."
+				fields={[
+					field('income_cents', 'Revenu annuel imposable (EUR)', 'money', { required: true }),
+					field('parts_tenths', 'Parts fiscales (dixièmes)', 'number', {
+						required: true,
+						default: 10,
+						min: 10,
+						max: 100,
+						help: '10 = 1 part ; 15 = 1,5 part ; 20 = 2 parts.'
+					}),
+					field('year', 'Année d’imposition', 'number', {
+						required: true,
+						default: 2026,
+						min: 2026,
+						max: 2026
+					}),
+					field('per_ceiling_cents', 'Plafond PER disponible sur ton avis (EUR)', 'money', {
+						help: 'Requis pour évaluer un versement PER.'
+					}),
+					field('per_cents', 'Versement PER déductible (EUR)', 'money', {
+						help: 'Dans la limite de ton plafond personnel de déduction.'
+					})
+				]}
+			/><RemotePanel
+				title="Échéances fiscales indicatives"
+				path="/v1/tax/deadlines"
+			/>{:else if section === 'timeline'}<RemotePanel
+				title="Ta chronologie patrimoniale"
+				path="/v1/timeline"
+			/>{/if}{/key}
+</div>

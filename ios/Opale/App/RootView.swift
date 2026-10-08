@@ -13,6 +13,13 @@ struct RootView: View {
                 ProfileGateView()
             case .loggedIn:
                 MainTabView()
+                    .id(session.profileKey)
+                    .safeAreaInset(edge: .top) {
+                        if session.isOffline {
+                            Label("Hors ligne · consultation du dernier état enregistré", systemImage: "wifi.slash")
+                                .font(.caption).padding(8).frame(maxWidth: .infinity).background(.regularMaterial)
+                        }
+                    }
             }
         }
         .task { await session.bootstrap() }
@@ -21,6 +28,7 @@ struct RootView: View {
 
 /// Les 5 onglets d'Opale : Accueil / Flux / Patrimoine / Projection / Assistant.
 struct MainTabView: View {
+    @Environment(SessionStore.self) private var session
     enum Section: Hashable {
         case home, flows, wealth, projection, assistant
     }
@@ -42,6 +50,7 @@ struct MainTabView: View {
     }()
 
     var body: some View {
+        @Bindable var session = session
         TabView(selection: $selection) {
             Tab(value: .home) {
                 HomeView()
@@ -74,8 +83,12 @@ struct MainTabView: View {
                     .symbolEffect(.bounce, value: selection == .assistant)
             }
         }
+        .sheet(isPresented: $session.showAlerts) { AlertsInboxView() }
         // Chaque changement d'onglet « clique » sous le doigt.
         .sensoryFeedback(.selection, trigger: selection)
+        .onChange(of: session.selectedTab, initial: true) { _, tab in
+            selection = switch tab { case "flows": .flows; case "wealth": .wealth; case "projection": .projection; case "assistant": .assistant; default: .home }
+        }
     }
 }
 

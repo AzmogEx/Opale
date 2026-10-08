@@ -58,6 +58,18 @@ func (s *Store) UpsertPropertyDetails(ctx context.Context, profileID string, d P
 	if d.LiabilityID != nil && *d.LiabilityID == "" {
 		d.LiabilityID = nil
 	}
+	if d.LiabilityID != nil {
+		var owns, compatible bool
+		if err = s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM liabilities WHERE id=$1 AND profile_id=$2),EXISTS(SELECT 1 FROM liabilities l JOIN assets a ON a.profile_id=l.profile_id AND a.currency=l.currency WHERE l.profile_id=$2 AND l.id=$1 AND a.id=$3)`, *d.LiabilityID, profileID, d.AssetID).Scan(&owns, &compatible); err != nil {
+			return err
+		}
+		if !owns {
+			return ErrNotFound
+		}
+		if !compatible {
+			return fmt.Errorf("%w: prêt et bien doivent utiliser la même devise", ErrInvalid)
+		}
+	}
 	_, err = s.pool.Exec(ctx, `
 		INSERT INTO property_details (asset_id, profile_id, purchase_price_cents,
 			purchase_date, monthly_rent_cents, monthly_charges_cents,
@@ -92,17 +104,17 @@ func (s *Store) ListProperties(ctx context.Context, profileID string) ([]Propert
 		       COALESCE(pd.property_tax_yearly_cents, 0),
 		       pd.liability_id, COALESCE(pd.monthly_loan_payment_cents, 0),
 		       l.name,
-		       llv.value_cents
+		       CASE WHEN l.id IS NULL THEN NULL WHEN l.currency=a.currency THEN current_liability_value(a.profile_id,l.id,CURRENT_DATE) ELSE native_from_eur(amount_eur(current_liability_value(a.profile_id,l.id,CURRENT_DATE),l.currency,CURRENT_DATE,a.profile_id),a.currency,CURRENT_DATE,a.profile_id) END
 		FROM assets a
 		LEFT JOIN property_details pd ON pd.asset_id = a.id
 		LEFT JOIN liabilities l ON l.id = pd.liability_id
 		LEFT JOIN LATERAL (
 			SELECT value_cents FROM valuations
-			WHERE asset_id = a.id ORDER BY as_of DESC, created_at DESC LIMIT 1
+			WHERE asset_id = a.id AND profile_id=a.profile_id AND as_of<=CURRENT_DATE ORDER BY as_of DESC, created_at DESC LIMIT 1
 		) lv ON true
 		LEFT JOIN LATERAL (
 			SELECT value_cents FROM valuations
-			WHERE liability_id = pd.liability_id ORDER BY as_of DESC, created_at DESC LIMIT 1
+			WHERE liability_id = pd.liability_id AND profile_id=a.profile_id AND as_of<=CURRENT_DATE ORDER BY as_of DESC, created_at DESC LIMIT 1
 		) llv ON true
 		WHERE a.profile_id = $1 AND a.kind = 'real_estate' AND NOT a.archived
 		ORDER BY a.created_at`,
@@ -113,7 +125,7 @@ func (s *Store) ListProperties(ctx context.Context, profileID string) ([]Propert
 	}
 	defer rows.Close()
 
-	var out []Property
+	out := []Property{}
 	for rows.Next() {
 		var p Property
 		var latest, loanRemaining *int64
@@ -215,7 +227,7 @@ func (s *Store) ListObjects(ctx context.Context, profileID string) ([]ValuableOb
 		LEFT JOIN object_details od ON od.asset_id = a.id
 		LEFT JOIN LATERAL (
 			SELECT value_cents FROM valuations
-			WHERE asset_id = a.id ORDER BY as_of DESC, created_at DESC LIMIT 1
+			WHERE asset_id = a.id AND profile_id=a.profile_id AND as_of<=CURRENT_DATE ORDER BY as_of DESC, created_at DESC LIMIT 1
 		) lv ON true
 		WHERE a.profile_id = $1
 		  AND a.kind IN ('precious_metal', 'vehicle', 'valuable')
@@ -228,7 +240,7 @@ func (s *Store) ListObjects(ctx context.Context, profileID string) ([]ValuableOb
 	}
 	defer rows.Close()
 
-	var out []ValuableObject
+	out := []ValuableObject{}
 	for rows.Next() {
 		var o ValuableObject
 		var latest *int64
@@ -307,7 +319,7 @@ func (s *Store) ListDocuments(ctx context.Context, profileID string) ([]Document
 	}
 	defer rows.Close()
 
-	var out []Document
+	out := []Document{}
 	for rows.Next() {
 		var d Document
 		if err := rows.Scan(&d.ID, &d.AssetID, &d.AssetName, &d.Name, &d.Kind,
@@ -400,7 +412,7 @@ func (s *Store) ListContacts(ctx context.Context, profileID string) ([]Contact, 
 	}
 	defer rows.Close()
 
-	var out []Contact
+	out := []Contact{}
 	for rows.Next() {
 		var c Contact
 		if err := rows.Scan(&c.ID, &c.Name, &c.Role, &c.Phone, &c.Email,
@@ -441,10 +453,10 @@ type FirstValuation struct {
 func (s *Store) FirstValuations(ctx context.Context, profileID string) ([]FirstValuation, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT DISTINCT ON (v.asset_id)
-		       v.asset_id, a.name, a.kind, v.value_cents, v.as_of
+		       v.asset_id, a.name, a.kind, amount_eur(v.value_cents,a.currency,v.as_of,v.profile_id), v.as_of
 		FROM valuations v
 		JOIN assets a ON a.id = v.asset_id
-		WHERE v.profile_id = $1 AND v.asset_id IS NOT NULL AND NOT a.archived
+		WHERE v.profile_id = $1 AND v.asset_id IS NOT NULL AND v.as_of<=CURRENT_DATE
 		ORDER BY v.asset_id, v.as_of ASC, v.created_at ASC`,
 		profileID,
 	)
@@ -453,7 +465,7 @@ func (s *Store) FirstValuations(ctx context.Context, profileID string) ([]FirstV
 	}
 	defer rows.Close()
 
-	var out []FirstValuation
+	out := []FirstValuation{}
 	for rows.Next() {
 		var f FirstValuation
 		var v int64

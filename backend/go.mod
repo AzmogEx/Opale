@@ -3,13 +3,14 @@ module github.com/opale-app/opale
 go 1.26
 
 require (
+	github.com/anthropics/anthropic-sdk-go v1.56.0
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/jackc/pgx/v5 v5.10.0
 	golang.org/x/crypto v0.53.0
+	golang.org/x/text v0.38.0
 )
 
 require (
-	github.com/anthropics/anthropic-sdk-go v1.56.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
@@ -24,5 +25,4 @@ require (
 	github.com/tidwall/sjson v1.2.5 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
 	golang.org/x/sync v0.21.0 // indirect
-	golang.org/x/text v0.38.0 // indirect
 )

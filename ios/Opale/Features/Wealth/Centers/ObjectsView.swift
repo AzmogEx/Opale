@@ -9,6 +9,7 @@ struct ObjectsView: View {
     @State private var objects: [ObjectStatus] = []
     @State private var editing: ObjectStatus?
     @State private var loaded = false
+    @State private var errorMessage: String?
     // Photos (EF-035) : documents « photo » du coffre, par actif.
     @State private var photoDocs: [String: VaultDocument] = [:]
     @State private var thumbnails: [String: UIImage] = [:]
@@ -17,6 +18,7 @@ struct ObjectsView: View {
 
     var body: some View {
         List {
+            if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
             if loaded && objects.isEmpty {
                 ContentUnavailableView(
                     "Aucun objet de valeur",
@@ -97,10 +99,10 @@ struct ObjectsView: View {
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
-                AmountText(cents: o.asset.latestValue ?? .zero, style: .whole)
+                Group { if let value = o.asset.latestValue { AmountText(cents: value, style: .whole, currency: o.asset.currency) } else { Text("Valeur non renseignée") } }
                     .font(.callout.weight(.semibold))
                 if o.details.purchasePrice.raw > 0, o.change.raw != 0 {
-                    AmountText(cents: o.change, style: .signedDelta)
+                    AmountText(cents: o.change, style: .signedDelta, currency: o.asset.currency)
                         .font(.caption)
                         .foregroundStyle(o.change.raw < 0 ? OpaleTheme.loss : OpaleTheme.gain)
                 }
@@ -109,7 +111,7 @@ struct ObjectsView: View {
     }
 
     private func load() async {
-        objects = (try? await session.api.objects()) ?? []
+        do { objects = try await session.api.objects(); errorMessage = nil } catch { errorMessage = error.localizedDescription }
         loaded = true
         await loadPhotos()
     }
@@ -137,19 +139,14 @@ struct ObjectsView: View {
         let resized = image.preparingThumbnail(of: CGSize(width: 800, height: 800)) ?? image
         guard let jpeg = resized.jpegData(compressionQuality: 0.8) else { return }
 
-        // Une seule photo par objet : l'ancienne est remplacée.
-        if let old = photoDocs[object.asset.id] {
-            try? await session.api.deleteDocument(id: old.id)
-        }
-        _ = try? await session.api.createDocument(.init(
-            name: "photo-\(object.asset.name).jpg",
-            kind: "photo",
-            mime: "image/jpeg",
-            assetID: object.asset.id,
-            contentBase64: jpeg.base64EncodedString()
-        ))
-        thumbnails[object.asset.id] = resized
-        await loadPhotos()
+        do {
+            let created = try await session.api.createDocument(.init(name: "photo-\(object.asset.name).jpg", kind: "photo", mime: "image/jpeg", assetID: object.asset.id, contentBase64: jpeg.base64EncodedString()))
+            if let old = photoDocs[object.asset.id] { try await session.api.deleteDocument(id: old.id) }
+            photoDocs[object.asset.id] = created
+            thumbnails[object.asset.id] = resized
+            errorMessage = nil
+        } catch { errorMessage = error.localizedDescription }
+
     }
 }
 
@@ -177,7 +174,7 @@ private struct ObjectFormSheet: View {
                     TextField("Marque / auteur / référence", text: $brand)
                 }
                 Section("Achat") {
-                    TextField("Prix d'achat (€)", text: $purchaseText)
+                    TextField("Prix d'achat (\(object.asset.currency))", text: $purchaseText)
                         .keyboardType(.decimalPad)
                     Toggle("Date d'achat", isOn: $hasDate)
                     if hasDate {
@@ -211,7 +208,7 @@ private struct ObjectFormSheet: View {
         category = object.details.category
         brand = object.details.brand
         if object.details.purchasePrice.raw > 0 {
-            purchaseText = String(object.details.purchasePrice.raw / 100)
+            purchaseText = MoneyFormat.input(object.details.purchasePrice, currency: object.asset.currency)
         }
         if let date = object.details.purchaseDate {
             hasDate = true
@@ -221,14 +218,16 @@ private struct ObjectFormSheet: View {
     }
 
     private func save() async {
+        guard let purchase = Cents.parse(purchaseText.isEmpty ? "0" : purchaseText, currency: object.asset.currency), purchase.raw >= 0 else { errorMessage = "Prix d’achat valide requis."; return }
         do {
             try await session.api.upsertObject(assetID: object.asset.id, .init(
                 category: category.trimmingCharacters(in: .whitespaces),
                 brand: brand.trimmingCharacters(in: .whitespaces),
-                purchasePriceCents: purchaseText.isEmpty ? 0 : (Cents.parse(purchaseText)?.raw ?? 0),
+                purchasePriceCents: purchase.raw,
                 purchaseDate: hasDate ? purchaseDate.opaleDayString : "",
                 insured: insured
             ))
+            session.changed()
             onSaved()
             dismiss()
         } catch {

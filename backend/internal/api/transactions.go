@@ -100,12 +100,14 @@ func (s *Server) handleListTransactions(w http.ResponseWriter, r *http.Request) 
 }
 
 type transactionRequest struct {
-	AssetID    string `json:"asset_id"`
-	Amount     int64  `json:"amount_cents"`
-	OccurredOn string `json:"occurred_on"` // yyyy-MM-dd
-	Label      string `json:"label"`
-	CategoryID string `json:"category_id"`
-	Note       string `json:"note"`
+	LinkedLiabilityID *string `json:"linked_liability_id,omitempty"`
+	FlowKind          string  `json:"flow_kind"`
+	AssetID           string  `json:"asset_id"`
+	Amount            int64   `json:"amount_cents"`
+	OccurredOn        string  `json:"occurred_on"` // yyyy-MM-dd
+	Label             string  `json:"label"`
+	CategoryID        string  `json:"category_id"`
+	Note              string  `json:"note"`
 }
 
 func (s *Server) handleCreateTransaction(w http.ResponseWriter, r *http.Request) {
@@ -129,13 +131,15 @@ func (s *Server) handleCreateTransaction(w http.ResponseWriter, r *http.Request)
 	}
 
 	n := store.NewTransaction{
-		AssetID:     req.AssetID,
-		Amount:      money.Cents(req.Amount),
-		OccurredOn:  occurredOn,
-		Label:       req.Label,
-		RawLabel:    req.Label,
-		MerchantKey: categorize.MerchantKey(req.Label),
-		Note:        req.Note,
+		LinkedLiabilityID: req.LinkedLiabilityID,
+		AssetID:           req.AssetID,
+		FlowKind:          req.FlowKind,
+		Amount:            money.Cents(req.Amount),
+		OccurredOn:        occurredOn,
+		Label:             req.Label,
+		RawLabel:          req.Label,
+		MerchantKey:       categorize.MerchantKey(req.Label),
+		Note:              req.Note,
 	}
 	if req.CategoryID != "" {
 		n.CategoryID = &req.CategoryID
@@ -158,6 +162,8 @@ func (s *Server) handleCreateTransaction(w http.ResponseWriter, r *http.Request)
 }
 
 type transactionPatchRequest struct {
+	AssetID        *string `json:"asset_id"`
+	FlowKind       *string `json:"flow_kind"`
 	Label          *string `json:"label"`
 	Note           *string `json:"note"`
 	CategoryID     *string `json:"category_id"` // "" = décatégoriser
@@ -176,7 +182,7 @@ func (s *Server) handleUpdateTransaction(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	patch := store.TransactionPatch{Label: req.Label, Note: req.Note, CategoryID: req.CategoryID}
+	patch := store.TransactionPatch{AssetID: req.AssetID, FlowKind: req.FlowKind, Label: req.Label, Note: req.Note, CategoryID: req.CategoryID}
 	if req.OccurredOn != nil {
 		t, err := time.Parse(dayLayout, *req.OccurredOn)
 		if err != nil {
@@ -190,23 +196,27 @@ func (s *Server) handleUpdateTransaction(w http.ResponseWriter, r *http.Request)
 		patch.Amount = &c
 	}
 
-	tx, err := s.store.UpdateTransaction(r.Context(), p.ID, id, patch)
-	if err != nil {
-		s.storeErr(w, err, "update transaction")
-		return
-	}
-
-	// Correction de catégorie → apprentissage (EF-022) : la règle marchand du
-	// profil est mise à jour, et primera sur les mots-clés pour la suite.
-	if req.CategoryID != nil && *req.CategoryID != "" && tx.MerchantKey != "" {
-		if err := s.store.UpsertMerchantRule(r.Context(), p.ID, tx.MerchantKey, *req.CategoryID); err != nil {
-			s.log.Error("upsert merchant rule", "err", err)
+	var tx store.Transaction
+	err := s.store.Atomic(r.Context(), func(st *store.Store) error {
+		var e error
+		tx, e = st.UpdateTransaction(r.Context(), p.ID, id, patch)
+		if e != nil {
+			return e
 		}
-		if req.ApplyToSimilar {
-			if _, err := s.store.ApplyCategoryToMerchant(r.Context(), p.ID, tx.MerchantKey, *req.CategoryID); err != nil {
-				s.log.Error("apply category to merchant", "err", err)
+		if req.CategoryID != nil && *req.CategoryID != "" && tx.MerchantKey != "" {
+			if e = st.UpsertMerchantRule(r.Context(), p.ID, tx.MerchantKey, *req.CategoryID); e != nil {
+				return e
+			}
+			if req.ApplyToSimilar {
+				_, e = st.ApplyCategoryToMerchant(r.Context(), p.ID, tx.MerchantKey, *req.CategoryID)
+				return e
 			}
 		}
+		return nil
+	})
+	if err != nil {
+		s.storeErr(w, err, "update transaction and learning")
+		return
 	}
 
 	writeJSON(w, http.StatusOK, tx)
@@ -225,7 +235,7 @@ func (s *Server) handleDeleteTransaction(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) handleMonthSummary(w http.ResponseWriter, r *http.Request) {
 	p := profileFromContext(r.Context())
-	now := time.Now()
+	now := parisToday()
 
 	year, month := now.Year(), int(now.Month())
 	if raw := r.URL.Query().Get("year"); raw != "" {
@@ -267,13 +277,19 @@ func (s *Server) handleImportCSV(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	asset, err := s.store.GetAsset(r.Context(), p.ID, req.AssetID)
+	if err != nil {
+		s.storeErr(w, err, "import account")
+		return
+	}
+	exp := store.CurrencyExponent(asset.Currency)
 	// CSV ou OFX : détection automatique (EF-070).
 	var rows []csvimport.Row
 	var parseErr error
 	if csvimport.IsOFX(req.CSV) {
-		rows, parseErr = csvimport.ParseOFX(req.CSV)
+		rows, parseErr = csvimport.ParseOFXCurrency(req.CSV, exp)
 	} else {
-		rows, parseErr = csvimport.Parse(req.CSV)
+		rows, parseErr = csvimport.ParseCurrency(req.CSV, exp)
 	}
 	if parseErr != nil {
 		writeError(w, http.StatusBadRequest, "invalid_csv", parseErr.Error())
@@ -296,6 +312,7 @@ func (s *Server) handleImportCSV(w http.ResponseWriter, r *http.Request) {
 	for _, row := range rows {
 		prepared = append(prepared, store.NewTransaction{
 			AssetID:     req.AssetID,
+			SourceID:    row.SourceID,
 			Amount:      row.Amount,
 			OccurredOn:  row.OccurredOn,
 			Label:       categorize.CleanLabel(row.RawLabel),

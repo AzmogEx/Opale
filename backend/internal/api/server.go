@@ -9,36 +9,39 @@ import (
 	"github.com/opale-app/opale/internal/ai"
 	"github.com/opale-app/opale/internal/bank"
 	"github.com/opale-app/opale/internal/config"
+	"github.com/opale-app/opale/internal/jobs"
 	"github.com/opale-app/opale/internal/store"
 	"github.com/opale-app/opale/internal/vault"
 )
 
 // Server porte les dépendances des handlers HTTP.
 type Server struct {
-	store  *store.Store
-	cfg    config.Config
-	log    *slog.Logger
-	ai     *ai.Router
-	vault  *vault.Vault     // nil = coffre-fort désactivé (EF-064)
-	bank   *bank.GoCardless // nil = synchro bancaire désactivée (EF-071)
-	logins *loginLimiter    // anti brute-force du PIN (audit)
+	store   *store.Store
+	cfg     config.Config
+	log     *slog.Logger
+	ai      *ai.Router
+	vault   *vault.Vault     // nil = coffre-fort désactivé (EF-064)
+	bank    *bank.GoCardless // nil = synchro bancaire désactivée (EF-071)
+	logins  *loginLimiter    // anti brute-force du PIN (audit)
+	jobs    *jobs.Runner     // nil = jobs de fond absents (tests)
+	metrics requestMetrics
 }
 
 // journal trace un événement sensible dans le journal d'accès (ENF-004),
 // sans jamais bloquer la requête en cours.
 func (s *Server) journal(r *http.Request, profileID *string, event, detail string) {
 	if err := s.store.LogAccess(r.Context(), profileID, event, detail); err != nil {
-		s.log.Warn("journal d'accès", "event", event, "err", err)
+		s.log.Warn("journal d'accès", "event", event)
 	}
 }
 
 // NewServer construit le serveur d'API. La cascade IA est assemblée depuis
 // la configuration : chaque niveau absent est simplement ignoré (EIA-021).
-func NewServer(st *store.Store, cfg config.Config, log *slog.Logger) *Server {
+func NewServer(st *store.Store, cfg config.Config, log *slog.Logger, runner *jobs.Runner) *Server {
 	var homelab, cloud ai.Provider
 	if cfg.OllamaURL != "" {
 		homelab = ai.NewOllama(cfg.OllamaURL, cfg.OllamaModel)
-		log.Info("ai: niveau N2 (homelab) configuré", "url", cfg.OllamaURL, "model", cfg.OllamaModel)
+		log.Info("ai: niveau N2 (homelab) configuré")
 	}
 	if cfg.AnthropicAPIKey != "" && cfg.CloudAI {
 		cloud = ai.NewAnthropic(cfg.AnthropicAPIKey)
@@ -64,7 +67,7 @@ func NewServer(st *store.Store, cfg config.Config, log *slog.Logger) *Server {
 
 	return &Server{store: st, cfg: cfg, log: log,
 		ai: ai.NewRouter(homelab, cloud, log), vault: v, bank: gc,
-		logins: newLoginLimiter()}
+		logins: newLoginLimiter(), jobs: runner}
 }
 
 // Routes construit le routeur HTTP complet.
@@ -78,11 +81,13 @@ func (s *Server) Routes() http.Handler {
 	// Sondes de disponibilité (non authentifiées).
 	r.Get("/healthz", s.handleHealthz)
 	r.Get("/readyz", s.handleReadyz)
+	r.Get("/metrics", s.handleMetrics)
 
 	r.Route("/v1", func(r chi.Router) {
 		// Public : sélection et création de profil, connexion.
 		r.Get("/profiles", s.handleListProfiles)
 		r.Post("/profiles", s.handleCreateProfile)
+		r.Post("/profiles/demo", s.handleCreateDemoProfile)
 		r.Post("/auth/login", s.handleLogin)
 
 		// Authentifié : tout le reste est cloisonné par profil (EF-001).
@@ -91,6 +96,44 @@ func (s *Server) Routes() http.Handler {
 
 			r.Post("/auth/logout", s.handleLogout)
 			r.Get("/me", s.handleMe)
+			r.Patch("/me", s.handleUpdateMe)
+			r.Patch("/valuations/{id}", s.handleUpdateValuation)
+			r.Delete("/valuations/{id}", s.handleDeleteValuation)
+			r.Post("/categories", s.handleSaveCategory)
+			r.Patch("/categories/{id}", s.handleSaveCategory)
+			r.Delete("/categories/{id}", s.handleDeleteCategory)
+			r.Get("/rules", s.handleListRules)
+			r.Post("/rules", s.handleSaveRule)
+			r.Patch("/rules/{id}", s.handleSaveRule)
+			r.Delete("/rules/{id}", s.handleDeleteRule)
+			r.Delete("/push/register", s.handlePushUnregister)
+			r.Patch("/goals/{id}", s.handleUpdateGoal)
+			r.Get("/calendar", s.handleCalendar)
+			r.Post("/calendar", s.handleSaveCalendar)
+			r.Patch("/calendar/{id}", s.handleSaveCalendar)
+			r.Delete("/calendar/{id}", s.handleDeleteCalendar)
+			r.Put("/calendar/{id}/occurrences", s.handleCalendarOccurrence)
+			r.Put("/recurring/exclusion", s.handleRecurringExclusion)
+			r.Post("/decisions/compare", s.handleDecisionCompare)
+			r.Post("/transactions/{id}/label-suggestion", s.handleLabelSuggestion)
+			r.Patch("/contacts/{id}", s.handleUpdateContact)
+			r.Patch("/documents/{id}", s.handleUpdateDocument)
+			r.Get("/assets/{id}/investment", s.handleInvestmentDetail)
+			r.Post("/assets/{id}/investment/flows", s.handleSaveInvestmentFlow)
+			r.Patch("/assets/{id}/investment/flows/{flowID}", s.handleSaveInvestmentFlow)
+			r.Delete("/assets/{id}/investment/flows/{flowID}", s.handleDeleteInvestmentFlow)
+			r.Put("/assets/{id}/investment/coverage", s.handleInvestmentCoverage)
+			r.Get("/beneficiaries", s.handleBeneficiaries)
+			r.Put("/beneficiaries", s.handleSaveBeneficiary)
+			r.Delete("/beneficiaries/{id}", s.handleDeleteBeneficiary)
+			r.Get("/emergency-grants", s.handleEmergencyGrants)
+			r.Post("/emergency-grants", s.handleCreateEmergencyGrant)
+			r.Patch("/emergency-grants/{id}", s.handleActivateEmergencyGrant)
+			r.Delete("/emergency-grants/{id}", s.handleActivateEmergencyGrant)
+			r.Get("/emergency/{id}", s.handleEmergencyRead)
+			r.Get("/emergency/{id}/documents/{documentID}", s.handleEmergencyDocument)
+			r.Post("/transfers", s.handleTransfer)
+			r.Delete("/transfers/{id}", s.handleDeleteTransfer)
 			r.Get("/export", s.handleExport)
 			r.Get("/access-log", s.handleAccessLog)
 			r.Delete("/me/data", s.handleResetData)
@@ -122,11 +165,35 @@ func (s *Server) Routes() http.Handler {
 				r.Delete("/{currency}", s.handleDeleteFX)
 			})
 
+			// Le pilote automatique (P8) : cours, snapshots, allocation,
+			// alertes personnalisées, fiscal, crédit, Wrapped, push.
+			r.Post("/quotes/refresh", s.handleQuotesRefresh)
+			r.Get("/snapshots", s.handleSnapshots)
+			r.Route("/allocation", func(r chi.Router) {
+				r.Get("/", s.handleAllocation)
+				r.Put("/", s.handleSetAllocation)
+			})
+			r.Route("/alerts/custom", func(r chi.Router) {
+				r.Get("/", s.handleListCustomAlerts)
+				r.Post("/", s.handleCreateCustomAlert)
+				r.Patch("/{id}", s.handleUpdateCustomAlert)
+				r.Delete("/{id}", s.handleDeleteCustomAlert)
+			})
+			r.Get("/tax/estimate", s.handleTaxEstimateVerified)
+			r.Get("/tax/deadlines", s.handleTaxDeadlines)
+			r.Post("/loan/simulate", s.handleLoanSimulate)
+			r.Post("/loan/capacity", s.handleLoanCapacity)
+			r.Get("/wrapped", s.handleWrapped)
+			r.Post("/push/register", s.handlePushRegister)
+
 			// Le confort (P7)
 			r.Post("/scenarios/compare", s.handleCompareScenarios)
 			r.Get("/company", s.handleCompanies)
 			r.Route("/bank", func(r chi.Router) {
 				r.Get("/status", s.handleBankStatus)
+				r.Get("/accounts", s.handleBankAccounts)
+				r.Put("/accounts/{id}", s.handleMapBankAccount)
+				r.Post("/links/{id}/renew", s.handleRenewBank)
 				r.Get("/institutions", s.handleBankInstitutions)
 				r.Post("/connect", s.handleBankConnect)
 				r.Post("/sync", s.handleBankSync)
@@ -195,6 +262,8 @@ func (s *Server) Routes() http.Handler {
 					r.Delete("/", s.handleDeleteAsset)
 					r.Get("/valuations", s.handleListAssetValuations)
 					r.Post("/valuations", s.handleAddAssetValuation)
+					r.Put("/quote", s.handleSetAssetQuote)
+					r.Get("/quote", s.handleQuoteMetadata)
 					// Détails P6 : bien immobilier / objet de valeur.
 					r.Put("/property", s.handleUpsertProperty)
 					r.Put("/object", s.handleUpsertObject)

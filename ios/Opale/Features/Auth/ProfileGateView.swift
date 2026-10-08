@@ -14,9 +14,11 @@ struct ProfileGateView: View {
     @State private var viewState: ViewState = .loading
     @State private var selectedProfile: Profile?
     @State private var showCreate = false
+    @State private var demoError: String?
+    @State private var loadingDemo = false
     /// Onboarding : au tout premier lancement (aucun profil sur le serveur).
     @State private var showOnboarding = false
-    @State private var onboardingSeen = false
+    @AppStorage("onboarding.seen") private var onboardingSeen = false
 
     var body: some View {
         NavigationStack {
@@ -45,11 +47,14 @@ struct ProfileGateView: View {
             }
             .navigationTitle("Opale")
             .fullScreenCover(isPresented: $showOnboarding) {
-                OnboardingView {
+                OnboardingView(onDone: {
                     onboardingSeen = true
                     showOnboarding = false
                     showCreate = true
-                }
+                }, onSkip: {
+                    onboardingSeen = true
+                    showOnboarding = false
+                })
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -107,6 +112,12 @@ struct ProfileGateView: View {
             }
 
             Section {
+                serverField
+                Button("Actualiser les profils") { Task { await load() } }
+                Button(loadingDemo ? "Préparation…" : "Essayer la démonstration") {
+                    Task { loadingDemo = true; defer { loadingDemo = false }; do { try await session.startDemo() } catch { demoError = error.localizedDescription } }
+                }.disabled(loadingDemo)
+                if let demoError { Text(demoError).foregroundStyle(.red) }
                 Button {
                     showCreate = true
                 } label: {

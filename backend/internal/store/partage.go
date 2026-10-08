@@ -181,8 +181,8 @@ type SharedTransaction struct {
 // membres, vérifié par l'appelant via IsSpaceMember).
 func (s *Store) SpaceTransactions(ctx context.Context, spaceID string, limit int) ([]SharedTransaction, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT t.id, t.profile_id, p.name, t.label, t.amount_cents, t.occurred_on
-		FROM transactions t
+		SELECT t.id, t.profile_id, p.name, t.label, t.eur_cents, t.occurred_on
+		FROM financial_transactions t
 		JOIN profiles p ON p.id = t.profile_id
 		WHERE t.space_id = $1
 		ORDER BY t.occurred_on DESC, t.created_at DESC
@@ -221,10 +221,10 @@ type MemberBalance struct {
 func (s *Store) SpaceBalance(ctx context.Context, spaceID string) ([]MemberBalance, money.Cents, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT m.profile_id, p.name,
-		       COALESCE(-SUM(t.amount_cents) FILTER (WHERE t.amount_cents < 0), 0)
+		       COALESCE(-SUM(t.eur_cents) FILTER (WHERE t.amount_cents < 0), 0)
 		FROM space_members m
 		JOIN profiles p ON p.id = m.profile_id
-		LEFT JOIN transactions t ON t.space_id = m.space_id AND t.profile_id = m.profile_id
+		LEFT JOIN financial_transactions t ON t.space_id = m.space_id AND t.profile_id = m.profile_id
 		WHERE m.space_id = $1
 		GROUP BY m.profile_id, p.name, m.joined_at
 		ORDER BY m.joined_at`, spaceID)
@@ -242,7 +242,11 @@ func (s *Store) SpaceBalance(ctx context.Context, spaceID string) ([]MemberBalan
 			return nil, 0, fmt.Errorf("SpaceBalance: %w", err)
 		}
 		m.Paid = money.Cents(paid)
-		total += paid
+		n, e := money.Add(money.Cents(total), money.Cents(paid))
+		if e != nil {
+			return nil, 0, e
+		}
+		total = int64(n)
 		members = append(members, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -255,7 +259,10 @@ func (s *Store) SpaceBalance(ctx context.Context, spaceID string) ([]MemberBalan
 	share := total / int64(len(members))
 	for i := range members {
 		members[i].Share = money.Cents(share)
-		members[i].Balance = members[i].Paid - money.Cents(share)
+		if int64(i) < total%int64(len(members)) {
+			members[i].Share++
+		}
+		members[i].Balance = members[i].Paid - members[i].Share
 	}
 	return members, money.Cents(total), nil
 }

@@ -23,8 +23,8 @@ struct AnalyticsView: View {
 
 	private var month: Date {
 		let now = Date.now
-		return Calendar.current.date(byAdding: .month, value: offset,
-		                             to: Calendar.current.dateInterval(of: .month, for: now)!.start)!
+		return Calendar.opale.date(byAdding: .month, value: offset,
+		                             to: Calendar.opale.dateInterval(of: .month, for: now)!.start)!
 	}
 
 	var body: some View {
@@ -39,11 +39,11 @@ struct AnalyticsView: View {
 							comparisonCard(analytics)
 								.cascadeIn(0)
 							if let categories = analytics.categories, !categories.isEmpty {
-								donutCard(categories, total: analytics.summary.expenses)
+								donutCard(categories, total: analytics.summary.expenses).sensitive()
 									.cascadeIn(1)
 							}
 							if let merchants = analytics.topMerchants, !merchants.isEmpty {
-								merchantsCard(merchants, total: analytics.summary.expenses)
+								merchantsCard(merchants, total: analytics.summary.expenses).sensitive()
 									.cascadeIn(2)
 							}
 							if (analytics.categories ?? []).isEmpty {
@@ -77,7 +77,7 @@ struct AnalyticsView: View {
 		HStack {
 			Button { offset -= 1 } label: { Image(systemName: "chevron.left") }
 			Spacer()
-			Text(month.formatted(.dateTime.month(.wide).year()).capitalized)
+			Text(month.opaleFormatted(.dateTime.month(.wide).year()).capitalized)
 				.font(.headline)
 				.contentTransition(.numericText())
 				.animation(.snappy, value: offset)
@@ -250,7 +250,7 @@ struct AnalyticsView: View {
 	// MARK: - Chargement
 
 	private func load() async {
-		let comps = Calendar.current.dateComponents([.year, .month], from: month)
+		let comps = Calendar.opale.dateComponents([.year, .month], from: month)
 		do {
 			analytics = try await session.api.analytics(year: comps.year, month: comps.month)
 			errorMessage = nil

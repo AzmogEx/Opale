@@ -113,3 +113,16 @@ func TestParseEmpty(t *testing.T) {
 		t.Fatal("erreur attendue sur contenu vide")
 	}
 }
+func TestMalformedImportNeverSucceedsPartially(t *testing.T) {
+	if _, e := Parse("Date;Libellé;Montant\n01/01/2026;Valid;2\nINVALID;Bad;1"); e == nil {
+		t.Fatal("silently skipped invalid row")
+	}
+	rows, e := ParseCurrency("Date;Libellé;Montant\n01/01/2026;Yen;123", 0)
+	if e != nil || rows[0].Amount != 123 {
+		t.Fatal(rows, e)
+	}
+	rows, e = ParseCurrency("Date;Libellé;Montant\n01/01/2026;KWD;1.234", 3)
+	if e != nil || rows[0].Amount != 1234 {
+		t.Fatal(rows, e)
+	}
+}

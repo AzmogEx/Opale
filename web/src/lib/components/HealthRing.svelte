@@ -30,12 +30,7 @@
 		transform="rotate(-90 42 42)"
 		style="transition: stroke-dasharray 0.8s ease"
 	/>
-	<text
-		x="42"
-		y="47"
-		text-anchor="middle"
-		class="fill-current text-[1.35rem] font-bold"
-	>
+	<text x="42" y="47" text-anchor="middle" class="fill-current text-[1.35rem] font-bold">
 		{score}
 	</text>
 </svg>

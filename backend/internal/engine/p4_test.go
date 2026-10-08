@@ -84,8 +84,11 @@ func TestProjectCashDeterministic(t *testing.T) {
 		{Label: "Loyer", Amount: -80000, IntervalDays: 30, NextDate: day("2026-07-28"), Active: true},
 		{Label: "Résilié", Amount: -9999, IntervalDays: 30, NextDate: day("2026-07-10"), Active: false},
 	}
-	p := ProjectCash(money.Cents(100000), recurring, day("2026-07-05"), day("2026-07-31"), 0)
+	p, err := ProjectCash(money.Cents(100000), recurring, day("2026-07-05"), day("2026-07-31"), 0)
 
+	if err != nil {
+		t.Fatal(err)
+	}
 	// 1 000 + 3 400 − 800 = 3 600 € ; le flux inactif est ignoré.
 	if p.EndCash != money.Cents(360000) {
 		t.Fatalf("EndCash = %d, attendu 360000", p.EndCash)
@@ -101,7 +104,10 @@ func TestProjectCashDeterministic(t *testing.T) {
 
 func TestProjectCashVariableSpend(t *testing.T) {
 	// 10 jours × 20 €/jour de dépenses variables = −200 €.
-	p := ProjectCash(money.Cents(100000), nil, day("2026-07-05"), day("2026-07-15"), money.Cents(2000))
+	p, err := ProjectCash(money.Cents(100000), nil, day("2026-07-05"), day("2026-07-15"), money.Cents(2000))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if p.EndCash != money.Cents(80000) {
 		t.Fatalf("EndCash = %d, attendu 80000", p.EndCash)
 	}
@@ -133,8 +139,8 @@ func TestHealthScoreStressedProfile(t *testing.T) {
 		Expenses3M:   money.Cents(660_000), // 2 200 €/mois → épargne négative
 		Cash:         money.Cents(50_000),  // 500 € → 0,2 mois
 		Assets:       money.Cents(1_000_000),
-		Liabilities:  money.Cents(700_000),  // 70 %
-		FixedMonthly: money.Cents(180_000),  // 1 800 € (90 %)
+		Liabilities:  money.Cents(700_000), // 70 %
+		FixedMonthly: money.Cents(180_000), // 1 800 € (90 %)
 		AssetKindValues: map[string]money.Cents{
 			"checking": 1_000_000, // 100 % concentré
 		},

@@ -4,11 +4,9 @@ package store
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/opale-app/opale/internal/money"
 )
 
@@ -20,11 +18,12 @@ type CompanyDetails struct {
 	SIREN           string      `json:"siren"`
 	OwnershipBps    int         `json:"ownership_bps"`
 	CCA             money.Cents `json:"cca_cents"`
+	CCAAssetID      *string     `json:"cca_asset_id,omitempty"`
 	AnnualDividends money.Cents `json:"annual_dividends_cents"`
 	MonthlySalary   money.Cents `json:"monthly_salary_cents"`
 }
 
-// Company — une société : l'actif (valorisation = société entière) + détails.
+// Company — une société : l'actif (valorisation = valeur de ma part) + détails.
 type Company struct {
 	Asset   Asset          `json:"asset"`
 	Details CompanyDetails `json:"details"`
@@ -32,36 +31,7 @@ type Company struct {
 
 // UpsertCompanyDetails crée ou met à jour les détails d'une société.
 func (s *Store) UpsertCompanyDetails(ctx context.Context, profileID string, d CompanyDetails) error {
-	var kind string
-	err := s.pool.QueryRow(ctx,
-		`SELECT kind FROM assets WHERE id = $1 AND profile_id = $2`,
-		d.AssetID, profileID).Scan(&kind)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrNotFound
-	}
-	if err != nil {
-		return fmt.Errorf("UpsertCompanyDetails: %w", err)
-	}
-	if kind != "company_share" {
-		return fmt.Errorf("%w: l'actif n'est pas des parts de société", ErrInvalid)
-	}
-	_, err = s.pool.Exec(ctx, `
-		INSERT INTO company_details (asset_id, profile_id, siren, ownership_bps,
-			cca_cents, annual_dividends_cents, monthly_salary_cents)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		ON CONFLICT (asset_id) DO UPDATE SET
-			siren = EXCLUDED.siren,
-			ownership_bps = EXCLUDED.ownership_bps,
-			cca_cents = EXCLUDED.cca_cents,
-			annual_dividends_cents = EXCLUDED.annual_dividends_cents,
-			monthly_salary_cents = EXCLUDED.monthly_salary_cents`,
-		d.AssetID, profileID, d.SIREN, d.OwnershipBps,
-		int64(d.CCA), int64(d.AnnualDividends), int64(d.MonthlySalary),
-	)
-	if err != nil {
-		return fmt.Errorf("UpsertCompanyDetails: %w", err)
-	}
-	return nil
+	return s.saveCompanyWithCCA(ctx, profileID, d)
 }
 
 // ListCompanies — toutes les sociétés du profil.
@@ -70,13 +40,13 @@ func (s *Store) ListCompanies(ctx context.Context, profileID string) ([]Company,
 		SELECT a.id, a.name, a.kind, a.currency, a.note, a.archived, a.created_at, a.updated_at,
 		       lv.value_cents,
 		       COALESCE(cd.siren, ''), COALESCE(cd.ownership_bps, 10000),
-		       COALESCE(cd.cca_cents, 0), COALESCE(cd.annual_dividends_cents, 0),
-		       COALESCE(cd.monthly_salary_cents, 0)
+		       CASE WHEN cd.cca_asset_id IS NOT NULL THEN current_asset_value(a.profile_id,cd.cca_asset_id,CURRENT_DATE) ELSE COALESCE(cd.cca_cents,0) END, COALESCE(cd.annual_dividends_cents, 0),
+		       COALESCE(cd.monthly_salary_cents, 0), cd.cca_asset_id
 		FROM assets a
 		LEFT JOIN company_details cd ON cd.asset_id = a.id
 		LEFT JOIN LATERAL (
 			SELECT value_cents FROM valuations
-			WHERE asset_id = a.id ORDER BY as_of DESC, created_at DESC LIMIT 1
+			WHERE asset_id = a.id AND profile_id=a.profile_id AND as_of<=CURRENT_DATE ORDER BY as_of DESC, created_at DESC LIMIT 1
 		) lv ON true
 		WHERE a.profile_id = $1 AND a.kind = 'company_share' AND NOT a.archived
 		ORDER BY a.created_at`,
@@ -87,7 +57,7 @@ func (s *Store) ListCompanies(ctx context.Context, profileID string) ([]Company,
 	}
 	defer rows.Close()
 
-	var out []Company
+	out := []Company{}
 	for rows.Next() {
 		var c Company
 		var latest *int64
@@ -97,7 +67,7 @@ func (s *Store) ListCompanies(ctx context.Context, profileID string) ([]Company,
 			&c.Asset.Note, &c.Asset.Archived, &c.Asset.CreatedAt, &c.Asset.UpdatedAt,
 			&latest,
 			&c.Details.SIREN, &c.Details.OwnershipBps,
-			&c.Details.CCA, &c.Details.AnnualDividends, &c.Details.MonthlySalary,
+			&c.Details.CCA, &c.Details.AnnualDividends, &c.Details.MonthlySalary, &c.Details.CCAAssetID,
 		); err != nil {
 			return nil, fmt.Errorf("ListCompanies: %w", err)
 		}
@@ -116,6 +86,10 @@ func (s *Store) ListCompanies(ctx context.Context, profileID string) ([]Company,
 // BankLink — une banque connectée via GoCardless, rattachée à un actif.
 type BankLink struct {
 	ID              string     `json:"id"`
+	SyncStatus      string     `json:"sync_status"`
+	LastError       string     `json:"last_error"`
+	NextSyncAt      time.Time  `json:"next_sync_at"`
+	Attempts        int        `json:"attempts"`
 	AssetID         string     `json:"asset_id"`
 	AssetName       string     `json:"asset_name,omitempty"`
 	RequisitionID   string     `json:"requisition_id"`
@@ -144,7 +118,7 @@ func (s *Store) CreateBankLink(ctx context.Context, profileID string, l BankLink
 func (s *Store) ListBankLinks(ctx context.Context, profileID string) ([]BankLink, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT bl.id, bl.asset_id, a.name, bl.requisition_id, bl.institution_id,
-		       bl.institution_name, bl.status, bl.last_synced_at, bl.created_at
+		       bl.institution_name, bl.status, bl.last_synced_at, bl.created_at, bl.sync_status,bl.last_error,bl.next_sync_at,bl.attempts
 		FROM bank_links bl
 		JOIN assets a ON a.id = bl.asset_id
 		WHERE bl.profile_id = $1
@@ -156,12 +130,12 @@ func (s *Store) ListBankLinks(ctx context.Context, profileID string) ([]BankLink
 	}
 	defer rows.Close()
 
-	var out []BankLink
+	out := []BankLink{}
 	for rows.Next() {
 		var l BankLink
 		if err := rows.Scan(&l.ID, &l.AssetID, &l.AssetName, &l.RequisitionID,
 			&l.InstitutionID, &l.InstitutionName, &l.Status, &l.LastSyncedAt,
-			&l.CreatedAt); err != nil {
+			&l.CreatedAt, &l.SyncStatus, &l.LastError, &l.NextSyncAt, &l.Attempts); err != nil {
 			return nil, fmt.Errorf("ListBankLinks: %w", err)
 		}
 		out = append(out, l)

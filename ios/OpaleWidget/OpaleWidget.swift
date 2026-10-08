@@ -99,12 +99,13 @@ struct NetWorthWidgetView: View {
                 .foregroundStyle(.secondary)
 
             HStack(alignment: .center) {
-                Text(Self.euros(cents))
+                Text(entry.discreet ? "••••••" : Self.euros(cents))
                     .font(.system(size: family == .systemSmall ? 20 : 26,
                                   weight: .bold, design: .rounded))
                     .minimumScaleFactor(0.6)
                     .lineLimit(1)
-                    .blur(radius: entry.discreet ? 9 : 0)
+                    .privacySensitive()
+                    .accessibilityLabel(entry.discreet ? "Montant masqué" : Self.euros(cents))
                 Spacer(minLength: 4)
                 // INTERACTIF : flouter/révéler sans ouvrir l'app (AppIntent).
                 Button(intent: ToggleDiscreetIntent()) {
@@ -115,7 +116,7 @@ struct NetWorthWidgetView: View {
                 .buttonStyle(.plain)
             }
 
-            if let delta = monthDelta {
+            if !entry.discreet, let delta = monthDelta {
                 Text(Self.signedEuros(delta))
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(delta >= 0
@@ -123,7 +124,7 @@ struct NetWorthWidgetView: View {
                         : Color(red: 0.88, green: 0.36, blue: 0.38))
             }
 
-            if entry.historyCents.count >= 2 {
+            if !entry.discreet, entry.historyCents.count >= 2 {
                 sparkline
             }
         }
@@ -132,8 +133,8 @@ struct NetWorthWidgetView: View {
 
     private var monthDelta: Int64? {
         guard entry.historyCents.count >= 2 else { return nil }
-        return entry.historyCents[entry.historyCents.count - 1]
-            - entry.historyCents[entry.historyCents.count - 2]
+        let delta = entry.historyCents[entry.historyCents.count - 1].subtractingReportingOverflow(entry.historyCents[entry.historyCents.count - 2])
+        return delta.overflow ? nil : delta.partialValue
     }
 
     private var sparkline: some View {
@@ -159,7 +160,7 @@ struct NetWorthWidgetView: View {
         formatter.locale = Locale(identifier: "fr_FR")
         formatter.currencyCode = "EUR"
         formatter.maximumFractionDigits = 0
-        return formatter.string(from: NSNumber(value: Double(cents) / 100)) ?? "\(cents / 100) €"
+        return formatter.string(from: NSDecimalNumber(decimal: Decimal(cents) / 100)) ?? "\(cents / 100) €"
     }
 
     private static func signedEuros(_ cents: Int64) -> String {

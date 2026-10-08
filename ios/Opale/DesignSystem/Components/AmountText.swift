@@ -9,6 +9,7 @@ import SwiftUI
 struct AmountText: View {
     var cents: Cents
     var style: Style = .full
+    var currency = "EUR"
 
     enum Style {
         /// "48 300,00 €"
@@ -23,7 +24,8 @@ struct AmountText: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var text: String {
-        switch style {
+        if currency != "EUR" { return MoneyFormat.amount(cents, currency: currency, whole: style == .whole) }
+        return switch style {
         case .full: MoneyFormat.euros(cents)
         case .whole: MoneyFormat.eurosWhole(cents)
         case .signedDelta: MoneyFormat.signedEurosWhole(cents)
@@ -31,7 +33,9 @@ struct AmountText: View {
     }
 
     var body: some View {
-        Text(text)
+        // Replace the source string too: parent accessibility containers can
+        // derive their value from Text before applying its accessibility label.
+        Text(discreetMode ? "••••" : text)
             .contentTransition(.numericText(value: Double(cents.raw)))
             .animation(reduceMotion ? nil : .spring(duration: 0.6), value: cents)
             .monospacedDigit()

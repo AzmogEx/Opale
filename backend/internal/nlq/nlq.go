@@ -24,7 +24,13 @@ type Query struct {
 	MerchantQuery string
 	// Income : question sur les revenus plutôt que les dépenses.
 	Income bool
+	// Comparaison (« compare mars et avril ») : seconde période, ou zéro.
+	CompareFrom, CompareTo time.Time
+	ComparePeriodLabel     string
 }
+
+// IsComparison dit si la question demande la comparaison de deux périodes.
+func (q Query) IsComparison() bool { return !q.CompareFrom.IsZero() }
 
 // Confident dit si la question est bien une question de données :
 // il faut au moins une période OU une cible (catégorie/marchand).
@@ -42,6 +48,7 @@ var months = map[string]time.Month{
 var triggers = []string{
 	"combien", "dépensé", "depense", "dépense", "cout", "coût", "coûté",
 	"gagné", "gagne", "reçu", "recu", "total",
+	"compare", "comparaison", " vs ", "versus", "difference", "différence",
 }
 
 // normalize : minuscules + apostrophes/ponctuation neutralisées.
@@ -79,35 +86,32 @@ func Parse(question string, categories []string, merchants []string, now time.Ti
 		}
 	}
 
-	// ── Période ───────────────────────────────────────────────────────────
-	switch {
-	case strings.Contains(text, "ce mois"):
-		q.From = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-		q.To = q.From.AddDate(0, 1, -1)
-		q.PeriodLabel = "ce mois-ci"
-	case strings.Contains(text, "mois dernier"):
-		q.From = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -1, 0)
-		q.To = q.From.AddDate(0, 1, -1)
-		q.PeriodLabel = "le mois dernier"
-	case strings.Contains(text, "cette annee") || strings.Contains(text, "cette année"):
-		q.From = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
-		q.To = time.Date(now.Year(), 12, 31, 0, 0, 0, 0, time.UTC)
-		q.PeriodLabel = "cette année"
-	default:
-		for name, m := range months {
-			if strings.Contains(text, " "+name+" ") ||
-				strings.Contains(text, " "+name) && strings.HasSuffix(strings.TrimSpace(text), name) {
-				year := now.Year()
-				// Un mois futur sans année explicite = l'an passé ? Non :
-				// on prend le dernier mois écoulé portant ce nom.
-				if m > now.Month() {
-					year--
-				}
-				q.From = time.Date(year, m, 1, 0, 0, 0, 0, time.UTC)
-				q.To = q.From.AddDate(0, 1, -1)
-				q.PeriodLabel = "en " + name + " " + q.From.Format("2006")
-				break
-			}
+	// Explicit periods retain every month occurrence and its own year.
+	// Refuse unsupported counts before category/merchant recognition: a target
+	// alone must not make an ambiguously dated query look confident.
+	periods, valid := explicitPeriods(text, now)
+	if !valid {
+		return Query{}
+	}
+	if len(periods) > 0 {
+		q.From, q.To, q.PeriodLabel = periods[0].from, periods[0].to, periods[0].label
+		if len(periods) == 2 {
+			q.CompareFrom, q.CompareTo, q.ComparePeriodLabel = periods[1].from, periods[1].to, periods[1].label
+		}
+	} else {
+		switch {
+		case strings.Contains(text, "ce mois"):
+			q.From = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+			q.To = q.From.AddDate(0, 1, -1)
+			q.PeriodLabel = "ce mois-ci"
+		case strings.Contains(text, "mois dernier"):
+			q.From = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -1, 0)
+			q.To = q.From.AddDate(0, 1, -1)
+			q.PeriodLabel = "le mois dernier"
+		case strings.Contains(text, "cette annee") || strings.Contains(text, "cette année"):
+			q.From = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
+			q.To = time.Date(now.Year(), 12, 31, 0, 0, 0, 0, time.UTC)
+			q.PeriodLabel = "cette année"
 		}
 	}
 
@@ -137,4 +141,18 @@ func Parse(question string, categories []string, merchants []string, now time.Ti
 	}
 
 	return q
+}
+
+// monthRange résout un mois nommé sans année explicite : le dernier mois
+// écoulé portant ce nom (un mois futur bascule sur l'an passé).
+func monthRange(name string, now time.Time) (from, to time.Time, label string) {
+	m := months[name]
+	year := now.Year()
+	if m > now.Month() {
+		year--
+	}
+	from = time.Date(year, m, 1, 0, 0, 0, 0, time.UTC)
+	to = from.AddDate(0, 1, -1)
+	label = "en " + name + " " + from.Format("2006")
+	return
 }

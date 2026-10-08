@@ -1,149 +1,157 @@
 <script lang="ts">
-	// Accueil — le cœur émotionnel (EF-010→015) : patrimoine net en héros,
-	// trajectoire, cash, score de santé, alertes et radar de risques.
 	import { session } from '$lib/session.svelte';
-	import { euros, signedEuros, monthLabel } from '$lib/format';
-	import type { NetWorth, NetWorthPoint, Asset, HealthScore, OpaleAlert, Risk } from '$lib/api';
+	import { money, messageOf } from '$lib/domain';
+	import { monthLabel } from '$lib/format';
+	import { field, options } from '$lib/forms';
 	import Amount from '$lib/components/Amount.svelte';
 	import LineChart from '$lib/components/LineChart.svelte';
 	import HealthRing from '$lib/components/HealthRing.svelte';
-
-	let netWorth = $state<NetWorth | null>(null);
-	let history = $state<NetWorthPoint[]>([]);
-	let cash = $state(0);
-	let health = $state<HealthScore | null>(null);
-	let alerts = $state<OpaleAlert[]>([]);
-	let risks = $state<Risk[]>([]);
-	let error = $state('');
-
-	$effect(() => {
-		void (async () => {
-			try {
-				const [nw, hist, assets, hs, al, rk] = await Promise.all([
-					session.api.netWorth(),
-					session.api.netWorthHistory(12),
-					session.api.listAssets(),
-					session.api.healthScore(),
-					session.api.alerts(),
-					session.api.risks()
-				]);
-				netWorth = nw;
-				history = hist.points ?? [];
-				cash = assets
-					.filter((a: Asset) => ['checking', 'savings'].includes(a.kind) && !a.archived)
-					.reduce((sum: number, a: Asset) => sum + (a.latest_value_cents ?? 0), 0);
-				health = hs;
-				alerts = al;
-				risks = rk;
-			} catch (e) {
-				error = e instanceof Error ? e.message : String(e);
+	import DataView from '$lib/components/DataView.svelte';
+	import ResourcePanel from '$lib/components/ResourcePanel.svelte';
+	import Milestones from '$lib/components/Milestones.svelte';
+	let section = $state('overview');
+	let nw = $state<any>(null);
+	let history = $state<any[]>([]);
+	let cash = $state<number | null>(null);
+	let health = $state<any>(null);
+	let alerts = $state<any[]>([]);
+	let risks = $state<any[]>([]);
+	let errors = $state<string[]>([]);
+	let loading = $state(true);
+	let stamp = $state('');
+	async function load() {
+		loading = true;
+		errors = [];
+		const results = await Promise.allSettled([
+			session.api.netWorth(),
+			session.api.netWorthHistory(12),
+			session.api.request<any>('GET', '/v1/cashflow?days=1'),
+			session.api.healthScore(),
+			session.api.alerts(),
+			session.api.risks()
+		]);
+		const names = ['Patrimoine', 'Historique', 'Trésorerie', 'Santé', 'Alertes', 'Risques'];
+		results.forEach((r, i) => {
+			if (r.status === 'rejected') {
+				errors.push(`${names[i]} : ${messageOf(r.reason)}`);
+				return;
 			}
-		})();
+			const v: any = r.value;
+			if (i === 0) nw = v;
+			if (i === 1) history = v.points ?? [];
+			if (i === 2) cash = v.start_cash_cents;
+			if (i === 3) health = v;
+			if (i === 4) alerts = v;
+			if (i === 5) risks = v;
+		});
+		stamp = new Date().toLocaleTimeString('fr-FR');
+		loading = false;
+	}
+	$effect(() => {
+		void load();
 	});
-
 	const delta = $derived(
-		history.length >= 2 ? history[history.length - 1].net_cents - history[history.length - 2].net_cents : null
+		history.length > 1 ? history.at(-1).net_cents - history.at(-2).net_cents : null
 	);
-	const chartLabels = $derived(
-		history.length >= 2
-			? [monthLabel(new Date(history[0].as_of)), monthLabel(new Date(history[history.length - 1].as_of))]
-			: []
+	const pct = $derived(
+		delta !== null && history.at(-2)?.net_cents
+			? (delta / Math.abs(history.at(-2).net_cents)) * 100
+			: null
 	);
 </script>
 
-<h1 class="sr-only">Accueil</h1>
-
-{#if error}
-	<div class="glass border-loss/40 p-4 text-sm">Impossible de charger : {error}</div>
-{:else if netWorth}
-	<div class="grid gap-5">
-		<!-- Alertes intelligentes (EF-053) -->
-		{#each alerts as alert (alert.kind + alert.title)}
-			<div
-				class="glass flex items-start gap-3 p-4 {alert.severity === 'critical'
-					? 'border-loss/50'
-					: 'border-amber-400/50'}"
-			>
-				<span aria-hidden="true">{alert.severity === 'critical' ? '🚨' : '⚠️'}</span>
-				<div>
-					<p class="text-sm font-semibold">{alert.title}</p>
-					<p class="text-xs text-neutral-500">{alert.detail}</p>
-				</div>
-			</div>
-		{/each}
-
-		<!-- Héros : le patrimoine net (EF-010) -->
-		<section class="glass p-6 md:p-8">
-			<p class="text-xs font-semibold tracking-wider text-neutral-500 uppercase">
-				Patrimoine net
-			</p>
-			<p class="iridescent mt-1 text-5xl font-extrabold tracking-tight md:text-6xl">
-				<Amount cents={netWorth.net_cents} />
-			</p>
-			{#if delta !== null}
-				<p class="mt-2 text-sm font-medium {delta >= 0 ? 'text-gain' : 'text-loss'}">
-					<span class="amount">{signedEuros(delta)}</span> ce mois-ci
-				</p>
-			{/if}
-
-			{#if history.length >= 2}
-				<div class="mt-6">
-					<LineChart points={history.map((p) => p.net_cents)} labels={chartLabels} />
-				</div>
-			{/if}
-		</section>
-
-		<!-- Stats + santé -->
-		<div class="grid gap-5 md:grid-cols-3">
-			<section class="glass p-5">
-				<p class="text-xs font-semibold text-neutral-500 uppercase">Actifs</p>
-				<p class="mt-1 text-2xl font-bold"><Amount cents={netWorth.assets_total_cents} /></p>
-				<p class="text-xs text-neutral-500">
-					dont cash <span class="amount">{euros(cash)}</span>
-				</p>
+<svelte:head><title>Accueil · Opale</title></svelte:head>
+<div class="section-heading">
+	<h1>Vue d’ensemble</h1>
+	<button onclick={load} disabled={loading}>Actualiser</button>
+</div>
+<div class="tabstrip">
+	<button aria-pressed={section === 'overview'} onclick={() => (section = 'overview')}
+		>Mon patrimoine</button
+	><button aria-pressed={section === 'alerts'} onclick={() => (section = 'alerts')}
+		>Mes alertes</button
+	><button aria-pressed={section === 'milestones'} onclick={() => (section = 'milestones')}
+		>Jalons</button
+	>
+</div>
+<div class="stack">
+	{#if nw?.missing_valuations > 0}<p class="notice" role="status">
+			Total incomplet : {nw.missing_valuations} actifs ou dettes sans valorisation.
+		</p>{/if}
+	{#if section === 'overview'}{#if errors.length}<div class="notice error" role="alert">
+				{#each errors as error}<p>{error}</p>{/each}
+				<p>Les autres rubriques restent disponibles.</p>
+			</div>{/if}{#if loading && !nw}<p class="glass panel" role="status">
+				Chargement du patrimoine…
+			</p>{/if}
+		{#each alerts as alert, i (i)}<article class="glass panel">
+				<h2>{alert.title}</h2>
+				<p class="muted">{alert.detail}</p>
+			</article>{/each}
+		{#if nw}<section class="glass panel hero">
+				<p class="muted">PATRIMOINE NET</p>
+				<p class="iridescent hero-amount"><Amount cents={nw.net_cents} /></p>
+				{#if delta !== null}<p>
+						{delta >= 0 ? '+' : ''}{money(delta)} ce mois-ci {pct !== null
+							? `(${pct >= 0 ? '+' : ''}${pct.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} %)`
+							: ''}
+					</p>{/if}{#if history.length > 1}<LineChart
+						points={history.map((p) => p.net_cents)}
+						pointLabels={history.map((p) => monthLabel(new Date(p.as_of)))}
+						labels={[
+							monthLabel(new Date(history[0].as_of)),
+							monthLabel(new Date(history.at(-1).as_of))
+						]}
+					/>{:else}<p class="muted">
+						Ajoute des valorisations datées pour voir ta trajectoire.
+					</p>{/if}
 			</section>
-			<section class="glass p-5">
-				<p class="text-xs font-semibold text-neutral-500 uppercase">Dettes</p>
-				<p class="text-loss mt-1 text-2xl font-bold">
-					<Amount cents={-netWorth.liabilities_total_cents} />
-				</p>
-			</section>
-			{#if health}
-				<section class="glass flex items-center gap-4 p-5">
-					<HealthRing score={health.score} />
-					<div>
-						<p class="text-xs font-semibold text-neutral-500 uppercase">Santé financière</p>
-						<p class="text-sm text-neutral-500">
-							{health.components.reduce(
-								(worst, c) => (c.score / c.max < worst.score / worst.max ? c : worst),
-								health.components[0]
-							)?.comment}
-						</p>
-					</div>
+			<div class="stat-grid">
+				<section class="glass panel">
+					<p class="muted">Actifs</p>
+					<strong>{money(nw.assets_total_cents)}</strong>
 				</section>
-			{/if}
-		</div>
-
-		<!-- Radar de risques (EF-061) -->
-		{#if risks.length > 0}
-			<section class="glass p-5">
-				<p class="text-xs font-semibold text-neutral-500 uppercase">Radar de risques</p>
-				<ul class="mt-3 grid gap-3 md:grid-cols-2">
-					{#each risks as risk (risk.id)}
-						<li class="flex items-start gap-2 text-sm">
-							<span aria-hidden="true">
-								{risk.severity === 'critical' ? '🛑' : risk.severity === 'warning' ? '⚠️' : 'ℹ️'}
-							</span>
-							<div>
-								<p class="font-semibold">{risk.title}</p>
-								<p class="text-xs text-neutral-500">{risk.detail}</p>
-							</div>
-						</li>
-					{/each}
-				</ul>
-			</section>
-		{/if}
-	</div>
-{:else}
-	<div class="glass animate-pulse p-8 text-sm text-neutral-500">Chargement du cockpit…</div>
-{/if}
+				<section class="glass panel">
+					<p class="muted">Dettes</p>
+					<strong>{money(nw.liabilities_total_cents)}</strong>
+				</section>
+				<section class="glass panel">
+					<p class="muted">Trésorerie courante</p>
+					<strong>{cash !== null ? money(cash) : 'Indisponible'}</strong>
+					<p class="muted">Soldes actualisés des comptes et livrets, convertis en euros.</p>
+				</section>
+			</div>{/if}
+		{#if health}<section class="glass panel">
+				<div class="section-heading">
+					<h2>Santé financière</h2>
+					<HealthRing score={health.score} />
+				</div>
+				<DataView data={health.components} />
+			</section>{/if}{#if risks.length}<section class="glass panel">
+				<h2>Radar de risques</h2>
+				<DataView data={risks} />
+			</section>{/if}<small class="muted"
+			>Dernière actualisation : {stamp || 'en cours'}. Les données des rubriques en erreur peuvent
+			être antérieures.</small
+		>
+	{:else if section === 'alerts'}<ResourcePanel
+			title="Alertes personnalisées"
+			path="/v1/alerts/custom/"
+			listKey="alerts"
+			fields={[
+				field('kind', 'Déclencheur', 'select', {
+					required: true,
+					options: options({
+						cash_below: 'Trésorerie sous le seuil',
+						net_worth_below: 'Patrimoine sous le seuil',
+						expenses_month_above: 'Dépenses mensuelles au-dessus'
+					})
+				}),
+				field('threshold_cents', 'Seuil (EUR)', 'money', { required: true })
+			]}
+			updateFields={[
+				field('threshold_cents', 'Seuil (EUR)', 'money', { required: true }),
+				field('enabled', 'Alerte activée', 'checkbox')
+			]}
+		/>{:else}<Milestones />{/if}
+</div>

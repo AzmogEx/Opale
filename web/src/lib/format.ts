@@ -31,4 +31,4 @@ export const monthLabel = (d: Date) =>
 	d.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
 
 /** yyyy-MM-dd attendu par le backend. */
-export const dayString = (d: Date) => d.toISOString().slice(0, 10);
+export { dayString } from './domain';

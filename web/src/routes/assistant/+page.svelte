@@ -1,147 +1,194 @@
 <script lang="ts">
-	// Assistant (EF-050/051) : chat avec la cascade N2 homelab → N3 cloud
-	// anonymisé (consentement explicite, EIA-021/022) → repli moteur.
-	import { tick } from 'svelte';
+	import { onDestroy, tick } from 'svelte';
 	import { session } from '$lib/session.svelte';
+	import { messageOf, money } from '$lib/domain';
 	import type { AssistantStatus } from '$lib/api';
-
-	interface Message {
-		role: 'user' | 'assistant';
-		text: string;
-		tier: string;
-	}
-
-	let messages = $state<Message[]>([]);
+	import RemotePanel from '$lib/components/RemotePanel.svelte';
+	let section = $state('chat');
 	let draft = $state('');
 	let thinking = $state(false);
 	let status = $state<AssistantStatus | null>(null);
+	let error = $state('');
 	let pendingCloud = $state<string | null>(null);
 	let list = $state<HTMLElement | null>(null);
-
+	let controller: AbortController | null = null;
+	const previousMonth = new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1);
+	let year = $state(previousMonth.getFullYear());
+	let month = $state(previousMonth.getMonth() + 1);
 	const suggestions = [
 		'Comment va mon épargne ?',
 		'Quels sont mes risques ?',
 		'Résume ma situation en 3 phrases'
 	];
-
-	$effect(() => {
-		void session.api.assistantStatus().then((s) => (status = s));
-	});
-
-	const tierLabel: Record<string, string> = {
-		data: 'Moteur — réponse exacte',
-		n1: 'iPhone — local',
-		n2: 'Homelab — privé',
-		n3: 'Cloud — anonymisé',
-		'': 'Moteur — hors ligne'
+	const tiers: Record<string, string> = {
+		data: 'Moteur financier',
+		n1: 'Appareil local',
+		n2: 'Homelab privé',
+		n3: 'Cloud — contexte minimisé',
+		'': 'Moteur de repli'
 	};
-
+	const states: Record<string, string> = {
+		grounded: 'Réponse fondée',
+		clarification: 'Précision nécessaire',
+		clarification_needed: 'Précision nécessaire',
+		unsupported: 'Demande non prise en charge',
+		unavailable: 'Analyse indisponible',
+		incapable: 'Analyse impossible'
+	};
+	$effect(() => {
+		void session.api
+			.assistantStatus()
+			.then((s) => (status = s))
+			.catch((e) => (error = messageOf(e)));
+	});
+	onDestroy(() => controller?.abort());
 	async function ask(question: string, allowCloud = false) {
-		if (!allowCloud) messages.push({ role: 'user', text: question, tier: '' });
+		if (thinking) return;
+		if (allowCloud && session.profile?.privacy_default !== 'N2') {
+			error = 'Le cloud est désactivé pour ce profil.';
+			return;
+		}
+		const history = session.chat.slice(-18).map((m) => ({ role: m.role, text: m.text }));
+		if (!allowCloud)
+			session.chat = [...session.chat, { role: 'user' as const, text: question, tier: '' }].slice(
+				-20
+			);
 		draft = '';
 		thinking = true;
+		error = '';
 		pendingCloud = null;
+		controller = new AbortController();
+		const generation = session.generation;
 		try {
-			const res = await session.api.ask(question, allowCloud);
-			messages.push({ role: 'assistant', text: res.answer, tier: res.tier });
-			if (res.tier === '' && status?.cloud_configured && !allowCloud) {
+			const res = await session.api.ask(question, allowCloud, history, controller.signal);
+			if (generation !== session.generation) return;
+			session.chat = [
+				...session.chat,
+				{
+					role: 'assistant' as const,
+					text: res.answer,
+					tier: res.tier,
+					state: res.state,
+					facts: res.facts
+				}
+			].slice(-20);
+			if (
+				res.cloud_eligible &&
+				status?.cloud_configured &&
+				!allowCloud &&
+				session.profile?.privacy_default === 'N2'
+			)
 				pendingCloud = question;
-			}
 		} catch (e) {
-			messages.push({
-				role: 'assistant',
-				text: `Impossible de répondre : ${e instanceof Error ? e.message : e}`,
-				tier: ''
-			});
+			if (generation === session.generation)
+				error = controller.signal.aborted ? 'Demande annulée.' : messageOf(e);
 		} finally {
 			thinking = false;
 			await tick();
-			list?.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
+			list?.scrollTo({ top: list.scrollHeight, behavior: 'auto' });
 		}
 	}
-
-	function submit(event: SubmitEvent) {
-		event.preventDefault();
-		const q = draft.trim();
-		if (q && !thinking) void ask(q);
+	function submit(e: SubmitEvent) {
+		e.preventDefault();
+		if (draft.trim()) void ask(draft.trim());
 	}
 </script>
 
-<div class="mb-5 flex items-center justify-between">
-	<h1 class="text-2xl font-bold tracking-tight">Assistant</h1>
-	{#if status}
-		<div class="flex gap-2 text-[11px] font-medium">
-			<span class="glass px-2.5 py-1 {status.homelab_available ? 'text-gain' : 'text-neutral-400'}">
-				{status.homelab_available ? '● Homelab en ligne' : '○ Homelab hors ligne'}
-			</span>
-			<span class="glass px-2.5 py-1 {status.cloud_configured ? 'text-accent' : 'text-neutral-400'}">
-				{status.cloud_configured ? '● Cloud (anonymisé)' : '○ Cloud non configuré'}
-			</span>
-		</div>
-	{/if}
+<svelte:head><title>Assistant · Opale</title></svelte:head>
+<h1>Assistant</h1>
+<div class="tabstrip">
+	<button aria-pressed={section === 'chat'} onclick={() => (section = 'chat')}>Conversation</button
+	><button aria-pressed={section === 'review'} onclick={() => (section = 'review')}
+		>Bilan mensuel</button
+	><button aria-pressed={section === 'twin'} onclick={() => (section = 'twin')}
+		>Portrait financier</button
+	>
 </div>
-
-<div class="glass flex h-[70vh] flex-col p-4 md:p-6">
-	<div bind:this={list} class="flex-1 space-y-3 overflow-y-auto pr-1">
-		{#if messages.length === 0}
-			<div class="flex h-full flex-col items-center justify-center gap-3">
-				<span class="iridescent text-4xl">✦</span>
-				<p class="text-sm text-neutral-500">Pose une question sur ton patrimoine</p>
-				{#each suggestions as s (s)}
-					<button
-						onclick={() => ask(s)}
-						class="glass hover:border-accent/50 rounded-full px-4 py-2 text-sm transition"
-					>
-						{s}
-					</button>
-				{/each}
-			</div>
-		{/if}
-
-		{#each messages as message, i (i)}
-			<div class="flex {message.role === 'user' ? 'justify-end' : 'justify-start'}">
-				<div
-					class="max-w-[85%] rounded-3xl px-4 py-3 text-sm {message.role === 'user'
-						? 'bg-accent/20'
-						: 'bg-white/60 dark:bg-white/10'}"
-				>
-					<p class="whitespace-pre-wrap">{message.text}</p>
-					{#if message.role === 'assistant'}
-						<p class="mt-1 text-[10px] text-neutral-400">
-							🔒 {tierLabel[message.tier] ?? message.tier}
-						</p>
-					{/if}
-				</div>
-			</div>
-		{/each}
-
-		{#if pendingCloud}
+{#if section === 'chat'}<section class="glass panel">
+		<div class="section-heading">
+			<h2>Parlons de ton patrimoine</h2>
 			<button
-				onclick={() => ask(pendingCloud!, true)}
-				class="bg-accent/15 text-accent mx-auto block rounded-full px-4 py-2 text-xs font-semibold"
+				onclick={() => {
+					controller?.abort();
+					session.chat = [];
+					pendingCloud = null;
+				}}>Effacer l’historique</button
 			>
-				☁️ Analyser avec le modèle cloud (données anonymisées)
-			</button>
-		{/if}
-
-		{#if thinking}
-			<p class="animate-pulse text-xs text-neutral-400">Analyse en cours…</p>
-		{/if}
-	</div>
-
-	<form onsubmit={submit} class="mt-4 flex gap-2">
-		<input
-			bind:value={draft}
-			placeholder="Ta question…"
-			class="focus:border-accent flex-1 rounded-2xl border border-black/10 bg-white/70 px-4 py-3 text-sm outline-none dark:border-white/10 dark:bg-white/10"
+		</div>
+		<p class="muted">
+			{status?.homelab_available ? 'Homelab disponible' : 'Homelab indisponible ou non configuré'} · {session
+				.profile?.privacy_default === 'N2' && status?.cloud_configured
+				? 'Cloud possible avec ton accord'
+				: 'Cloud désactivé'}
+		</p>
+		<p class="muted">
+			Les 20 derniers messages restent en mémoire dans cet onglet. Ils sont supprimés à la
+			déconnexion ou au rechargement.
+		</p>
+		{#if error}<p class="notice error" role="alert">{error}</p>{/if}
+		<div class="chat-log" bind:this={list} role="log" aria-live="polite" aria-label="Conversation">
+			{#if !session.chat.length}<p class="empty">Pose une question sur tes finances.</p>
+				<div class="actions">
+					{#each suggestions as s}<button onclick={() => ask(s)} disabled={thinking}>{s}</button
+						>{/each}
+				</div>{/if}{#each session.chat as message, i (i)}<article
+					class:user-message={message.role === 'user'}
+					class="chat-message"
+				>
+					<h3>{message.role === 'user' ? 'Toi' : 'Opale'}</h3>
+					<p class="whitespace-pre-wrap">{message.text}</p>
+					{#if message.role === 'assistant'}<small
+							>{tiers[message.tier] ?? message.tier}{message.state
+								? ` · ${states[message.state] ?? message.state}`
+								: ''}</small
+						>{#if message.facts?.length}<details>
+								<summary>Chiffres et provenance</summary>{#each message.facts as fact (fact.id)}<p>
+										{fact.text ?? fact.id}{fact.value_cents !== undefined
+											? ` : ${money(fact.value_cents, fact.unit === 'EUR' ? 'EUR' : 'EUR')}`
+											: ''}<br /><small>{fact.period ?? ''} · {fact.source ?? 'Moteur Opale'}</small
+										>
+									</p>{/each}
+							</details>{/if}{/if}
+				</article>{/each}
+		</div>
+		{#if pendingCloud}<div class="notice">
+				<p>
+					Une analyse cloud peut recevoir une intention structurée et des agrégats financiers
+					arrondis. Ces données restent sensibles. Les textes libres de cette conversation restent
+					sur le serveur local.
+				</p>
+				<div class="actions">
+					<button onclick={() => ask(pendingCloud!, true)}>Autoriser pour cette demande</button
+					><button onclick={() => (pendingCloud = null)}>Rester en local</button>
+				</div>
+			</div>{/if}
+		<form onsubmit={submit} class="actions">
+			<label
+				>Ta question<input
+					bind:value={draft}
+					maxlength="2000"
+					required
+					autocomplete="off"
+					placeholder="Combien ai-je dépensé en courses ce mois-ci ?"
+				/></label
+			><button class="primary" disabled={thinking || !draft.trim()}
+				>{thinking ? 'Analyse…' : 'Envoyer'}</button
+			>{#if thinking}<button type="button" onclick={() => controller?.abort()}>Annuler</button>{/if}
+		</form>
+	</section>
+{:else if section === 'review'}<div class="stack">
+		<section class="glass panel form-grid">
+			<label>Année<input type="number" min="2000" max="2100" bind:value={year} /></label><label
+				>Mois<input type="number" min="1" max="12" bind:value={month} /></label
+			>
+		</section>
+		<RemotePanel
+			title="Bilan mensuel"
+			path={`/v1/monthly-review?year=${year}&month=${month}`}
+			description="Bilan local fondé sur les chiffres du moteur. Aucun accord cloud n’est transmis par cet écran."
 		/>
-		<button
-			type="submit"
-			disabled={!draft.trim() || thinking}
-			class="bg-accent rounded-2xl px-5 font-semibold text-white transition hover:brightness-105 disabled:opacity-40"
-			aria-label="Envoyer"
-		>
-			↑
-		</button>
-	</form>
-</div>
+	</div>{:else}<RemotePanel
+		title="Portrait financier"
+		path="/v1/twin"
+		description="Faits utilisés par le moteur pour les simulations, risques et analyses."
+	/>{/if}

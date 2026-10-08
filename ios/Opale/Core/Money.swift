@@ -33,32 +33,7 @@ struct Cents: Hashable, Codable, Sendable, Comparable, AdditiveArithmetic {
     /// Convertit une saisie décimale ("123,45", "1 000.5", "42300") en centimes,
     /// sans passer par un Double — miroir du `money.Parse` du backend Go.
     static func parse(_ input: String) -> Cents? {
-        var s = input.trimmingCharacters(in: .whitespaces)
-            .replacingOccurrences(of: " ", with: "")   // espace fine (fr)
-            .replacingOccurrences(of: " ", with: "")
-            .replacingOccurrences(of: "€", with: "")
-            .replacingOccurrences(of: ",", with: ".")
-        guard !s.isEmpty else { return nil }
-
-        let negative = s.hasPrefix("-")
-        if negative { s.removeFirst() }
-        if s.hasPrefix("+") { s.removeFirst() }
-
-        let parts = s.split(separator: ".", omittingEmptySubsequences: false)
-        guard parts.count <= 2, let whole = Int64(parts[0].isEmpty ? "0" : parts[0]) else { return nil }
-
-        var frac: Int64 = 0
-        if parts.count == 2 {
-            var f = String(parts[1])
-            guard f.count <= 2, f.allSatisfy(\.isNumber) else { return nil }
-            if f.count == 1 { f += "0" }
-            if f.isEmpty { f = "0" }
-            guard let parsed = Int64(f) else { return nil }
-            frac = parsed
-        }
-
-        let cents = whole * 100 + frac
-        return Cents(negative ? -cents : cents)
+        parse(input.replacingOccurrences(of: "€", with: ""), currency: "EUR")
     }
 }
 
@@ -95,9 +70,53 @@ enum MoneyFormat {
 
     /// "+2 140 €" / "−540 €" — variation signée.
     static func signedEurosWhole(_ cents: Cents) -> String {
-        let s = eurosWhole(Cents(abs(cents.raw)))
+        let magnitude = Decimal(cents.raw.magnitude) / 100
+        let s = whole.string(from: magnitude as NSDecimalNumber) ?? "—"
         if cents.raw > 0 { return "+" + s }
         if cents.raw < 0 { return "−" + s }
         return s
+    }
+}
+
+
+extension MoneyFormat {
+    static func amount(_ amount: Cents, currency: String, whole: Bool = false) -> String {
+        let formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "fr_FR")
+        formatter.numberStyle = .currency
+        formatter.currencyCode = currency
+        let scale = formatter.maximumFractionDigits
+        if whole { formatter.maximumFractionDigits = 0; formatter.minimumFractionDigits = 0 }
+        var divisor = Decimal(1)
+        for _ in 0..<scale { divisor *= 10 }
+        return formatter.string(from: (Decimal(amount.raw) / divisor) as NSDecimalNumber) ?? "—"
+    }
+}
+
+
+extension MoneyFormat {
+    static func exponent(_ currency: String) -> Int {
+        let formatter = NumberFormatter(); formatter.numberStyle = .currency; formatter.currencyCode = currency
+        return formatter.maximumFractionDigits
+    }
+    static func input(_ amount: Cents, currency: String) -> String {
+        var divisor = Decimal(1)
+        for _ in 0..<exponent(currency) { divisor *= 10 }
+        return NSDecimalNumber(decimal: Decimal(amount.raw) / divisor).stringValue
+    }
+}
+extension Cents {
+    static func parse(_ input: String, currency: String) -> Cents? {
+        let normalized = input.filter { !$0.isWhitespace }.replacingOccurrences(of: ",", with: ".")
+        guard normalized.range(of: #"^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$"#, options: .regularExpression) != nil,
+              let decimal = Decimal(string: normalized, locale: Locale(identifier: "en_US_POSIX")) else { return nil }
+        let exponent = MoneyFormat.exponent(currency)
+        guard normalized.split(separator: ".", omittingEmptySubsequences: false).count <= 2,
+              (normalized.split(separator: ".", omittingEmptySubsequences: false).last?.count ?? 0) <= exponent || !normalized.contains(".") else { return nil }
+        var multiplier = Decimal(1)
+        for _ in 0..<exponent { multiplier *= 10 }
+        let scaled = decimal * multiplier
+        guard scaled <= Decimal(Int64.max), scaled >= Decimal(Int64.min) else { return nil }
+        return Cents(NSDecimalNumber(decimal: scaled).int64Value)
     }
 }

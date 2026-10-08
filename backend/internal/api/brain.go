@@ -9,7 +9,10 @@ package api
 // disponible, un texte de repli déterministe prend sa place (EIA-020/021).
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"math/big"
 	"net/http"
 	"strconv"
 	"strings"
@@ -44,6 +47,17 @@ Règles absolues :
 // buildTwin assemble le double financier complet du profil : toutes les
 // mesures viennent du store, tous les verdicts du moteur.
 func (s *Server) buildTwin(r *http.Request, profileID string) (twin.Snapshot, error) {
+	var result twin.Snapshot
+	err := s.store.Snapshot(r.Context(), func(st *store.Store) error {
+		view := &Server{store: st, cfg: s.cfg, log: s.log, ai: s.ai}
+		var e error
+		result, e = view.buildTwinSnapshot(r, profileID)
+		return e
+	})
+	return result, err
+}
+
+func (s *Server) buildTwinSnapshot(r *http.Request, profileID string) (twin.Snapshot, error) {
 	ctx := r.Context()
 
 	income3M, expenses3M, err := s.store.FlowTotals3M(ctx, profileID)
@@ -73,7 +87,12 @@ func (s *Server) buildTwin(r *http.Request, profileID string) (twin.Snapshot, er
 	monthlySavings := monthlyIncome - monthlyExpenses
 	savingsRateBps := 0
 	if monthlyIncome > 0 {
-		savingsRateBps = int(int64(monthlySavings) * 10_000 / int64(monthlyIncome))
+		ratio := new(big.Int).Mul(big.NewInt(int64(monthlySavings)), big.NewInt(10000))
+		ratio.Quo(ratio, big.NewInt(int64(monthlyIncome)))
+		if !ratio.IsInt64() {
+			return twin.Snapshot{}, money.ErrOverflow
+		}
+		savingsRateBps = int(ratio.Int64())
 	}
 
 	// Charges fixes et sources de revenus (flux récurrents actifs).
@@ -86,31 +105,50 @@ func (s *Server) buildTwin(r *http.Request, profileID string) (twin.Snapshot, er
 			continue
 		}
 		if f.Amount < 0 {
-			fixedMonthly += -int64(f.Amount) * 30 / int64(f.IntervalDays)
+			value := new(big.Int).Mul(big.NewInt(int64(f.Amount)), big.NewInt(-30))
+			value.Quo(value, big.NewInt(int64(f.IntervalDays)))
+			value.Add(value, big.NewInt(fixedMonthly))
+			if !value.IsInt64() {
+				return twin.Snapshot{}, money.ErrOverflow
+			}
+			fixedMonthly = value.Int64()
 		} else {
 			incomeSources++
 		}
 	}
 
 	// Cash projeté à 30 jours (pour le radar).
+	manualKeys, err := s.store.CalendarMerchantKeys(ctx, profileID)
+	if err != nil {
+		return twin.Snapshot{}, err
+	}
+	keys = append(keys, manualKeys...)
 	daily, err := s.store.AvgDailyVariableSpend(ctx, profileID, keys)
 	if err != nil {
 		return twin.Snapshot{}, err
 	}
-	today := time.Now().Truncate(24 * time.Hour)
-	proj := engine.ProjectCash(cash, flows, today, today.AddDate(0, 0, 30), daily)
+	today := parisToday()
+	proj, err := engine.ProjectCash(cash, flows, today, today.AddDate(0, 0, 30), daily)
+	if err != nil {
+		return twin.Snapshot{}, err
+	}
+	if err := s.addCalendarFlows(r, profileID, today, &proj); err != nil {
+		return twin.Snapshot{}, err
+	}
 
 	snap := twin.Snapshot{
-		NetWorth:        nw.Net,
-		Assets:          nw.AssetsTotal,
-		Liabilities:     nw.LiabilitiesTotal,
-		Cash:            cash,
-		AssetKinds:      kinds,
-		MonthlyIncome:   monthlyIncome,
-		MonthlyExpenses: monthlyExpenses,
-		MonthlySavings:  monthlySavings,
-		FixedMonthly:    money.Cents(fixedMonthly),
-		SavingsRateBps:  savingsRateBps,
+		Complete:          nw.Complete,
+		MissingValuations: nw.MissingValuations,
+		NetWorth:          nw.Net,
+		Assets:            nw.AssetsTotal,
+		Liabilities:       nw.LiabilitiesTotal,
+		Cash:              cash,
+		AssetKinds:        kinds,
+		MonthlyIncome:     monthlyIncome,
+		MonthlyExpenses:   monthlyExpenses,
+		MonthlySavings:    monthlySavings,
+		FixedMonthly:      money.Cents(fixedMonthly),
+		SavingsRateBps:    savingsRateBps,
 	}
 
 	snap.Health = engine.ComputeHealthScore(engine.HealthInputs{
@@ -137,18 +175,21 @@ func (s *Server) buildTwin(r *http.Request, profileID string) (twin.Snapshot, er
 	})
 
 	if monthlyExpenses > 0 {
-		if ind, err := engine.ComputeIndependence(nw.Net, monthlySavings, monthlyExpenses,
-			twinReturnBps, twinSwrBps); err == nil {
-			snap.Independence = ind
+		ind, err := engine.ComputeIndependence(nw.Net, monthlySavings, monthlyExpenses, twinReturnBps, twinSwrBps)
+		if err != nil {
+			return twin.Snapshot{}, err
 		}
+		snap.Independence = ind
 	}
 
-	if statuses, err := s.goalStatuses(r, profileID); err == nil {
-		for _, g := range statuses {
-			snap.Goals = append(snap.Goals, twin.Goal{
-				Name: g.Name, Target: g.Target, Percent: g.Percent, OnTrack: g.OnTrack,
-			})
-		}
+	statuses, err := s.goalStatuses(r, profileID)
+	if err != nil {
+		return twin.Snapshot{}, err
+	}
+	for _, g := range statuses {
+		snap.Goals = append(snap.Goals, twin.Goal{
+			Name: g.Name, Target: g.Target, Percent: g.Percent, OnTrack: g.OnTrack,
+		})
 	}
 
 	return snap, nil
@@ -242,15 +283,15 @@ func (s *Server) handleDecision(w http.ResponseWriter, r *http.Request) {
 	)
 
 	narrative, tier := s.explain(r, ai.Request{
-		Task:   "decision",
-		System: systemPrompt,
-		Prompt: "Explique ce verdict à l'utilisateur. Contexte :\n" + twin.Describe(snap) + "\n" + facts,
-		AnonymizedPrompt: "Explique ce verdict à l'utilisateur. Contexte :\n" + twin.Anonymize(snap) + "\n" +
-			fmt.Sprintf("Décision : dépense immédiate %s, charge mensuelle %s. Verdict moteur : risque %s, retard d'indépendance %d mois. Recommandation : %s",
-				compactText(money.Cents(req.OneTimeCost)), compactText(money.Cents(req.MonthlyCost)),
-				impact.RiskLevel, normal.DelayMonths, impact.Recommendation),
+		Task:       "decision",
+		System:     systemPrompt,
+		Prompt:     "Explique ce verdict à l'utilisateur. Contexte :\n" + twin.Describe(snap) + "\n" + facts,
+		CloudFacts: cloudContext(snap, "decision"),
 		AllowCloud: req.AllowCloud,
 	}, impact.Recommendation)
+	if !snap.Complete {
+		narrative = "Données patrimoniales incomplètes : les résultats dépendent des valeurs renseignées. " + narrative
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"label":          req.Label,
@@ -266,17 +307,24 @@ func (s *Server) handleMonthlyReview(w http.ResponseWriter, r *http.Request) {
 	p := profileFromContext(r.Context())
 
 	// Mois demandé (défaut : le mois précédent, celui qu'on « clôture »).
-	now := time.Now()
-	year, month := now.AddDate(0, -1, 0).Year(), now.AddDate(0, -1, 0).Month()
+	now := parisToday()
+	previous := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).AddDate(0, -1, 0)
+	year, month := previous.Year(), previous.Month()
 	if raw := r.URL.Query().Get("year"); raw != "" {
-		if n, err := strconv.Atoi(raw); err == nil {
-			year = n
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1900 || n > now.Year() {
+			writeError(w, 422, "invalid_period", "Année invalide")
+			return
 		}
+		year = n
 	}
 	if raw := r.URL.Query().Get("month"); raw != "" {
-		if n, err := strconv.Atoi(raw); err == nil && n >= 1 && n <= 12 {
-			month = time.Month(n)
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > 12 {
+			writeError(w, 422, "invalid_period", "Mois invalide")
+			return
 		}
+		month = time.Month(n)
 	}
 	allowCloud := r.URL.Query().Get("allow_cloud") == "true"
 
@@ -298,7 +346,13 @@ func (s *Server) handleMonthlyReview(w http.ResponseWriter, r *http.Request) {
 
 	savingsRateBps := 0
 	if summary.Income > 0 {
-		savingsRateBps = int(int64(summary.Net) * 10_000 / int64(summary.Income))
+		value := new(big.Int).Mul(big.NewInt(int64(summary.Net)), big.NewInt(10000))
+		value.Quo(value, big.NewInt(int64(summary.Income)))
+		if !value.IsInt64() {
+			writeError(w, 422, "overflow", "Ratio hors limites")
+			return
+		}
+		savingsRateBps = int(value.Int64())
 	}
 
 	// Repli déterministe : un bilan gabarit, purement factuel.
@@ -320,19 +374,18 @@ func (s *Server) handleMonthlyReview(w http.ResponseWriter, r *http.Request) {
 	for _, c := range topCategories {
 		fmt.Fprintf(&facts, "- Poste « %s » : %s\n", c.Name, eurosText(c.Total))
 	}
-	anonFacts := fmt.Sprintf(
-		"Bilan du mois (chiffres agrégés) : revenus %s, dépenses %s, épargne %s, taux d'épargne %d %%.",
-		compactText(summary.Income), compactText(summary.Expenses), compactText(summary.Net), savingsRateBps/100)
 
 	narrative, tier := s.explain(r, ai.Request{
 		Task:   "monthly_review",
 		System: systemPrompt,
 		Prompt: "Rédige le bilan mensuel de l'utilisateur : ce qui va, ce qui coince, et UNE suggestion concrète.\n" +
 			twin.Describe(snap) + "\n" + facts.String(),
-		AnonymizedPrompt: "Rédige le bilan mensuel de l'utilisateur : ce qui va, ce qui coince, et UNE suggestion concrète.\n" +
-			twin.Anonymize(snap) + "\n" + anonFacts,
+		CloudFacts: cloudContext(snap, "monthly_review"),
 		AllowCloud: allowCloud,
 	}, fallback.String())
+	if !snap.Complete {
+		narrative += " Données patrimoniales incomplètes : le score dépend des valeurs renseignées."
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"year":             year,
@@ -348,64 +401,148 @@ func (s *Server) handleMonthlyReview(w http.ResponseWriter, r *http.Request) {
 
 // ── Assistant (EF-050/051) ────────────────────────────────────────────────────
 
+type conversationMessage struct {
+	Role string `json:"role"`
+	Text string `json:"text"`
+}
 type askRequest struct {
-	Question   string `json:"question"`
-	AllowCloud bool   `json:"allow_cloud"` // EIA-022
+	Question   string                `json:"question"`
+	AllowCloud bool                  `json:"allow_cloud"`
+	History    []conversationMessage `json:"history,omitempty"`
+}
+type assistantFact struct {
+	ID     string `json:"id"`
+	Value  *int64 `json:"value_cents,omitempty"`
+	Unit   string `json:"unit"`
+	Period string `json:"period"`
+	Source string `json:"source"`
+	Text   string `json:"text"`
 }
 
+func amountFact(id string, value money.Cents, period, source, label string) assistantFact {
+	v := int64(value)
+	return assistantFact{id, &v, "EUR", period, source, label + " : " + eurosText(value) + "."}
+}
 func (s *Server) handleAssistantAsk(w http.ResponseWriter, r *http.Request) {
 	p := profileFromContext(r.Context())
 	var req askRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_body", err.Error())
+		writeError(w, 400, "invalid_body", err.Error())
 		return
 	}
 	req.Question = strings.TrimSpace(req.Question)
-	if req.Question == "" {
-		writeError(w, http.StatusBadRequest, "invalid_body", "question est requise")
+	if req.Question == "" || len(req.Question) > 2000 || len(req.History) > 20 {
+		writeError(w, 400, "invalid_body", "Question de 1 à 2000 caractères et historique de 20 messages maximum")
 		return
 	}
-	if len(req.Question) > 2_000 {
-		writeError(w, http.StatusBadRequest, "invalid_body", "question trop longue (2000 caractères max)")
+	for _, m := range req.History {
+		if (m.Role != "user" && m.Role != "assistant") || len(m.Text) > 4000 {
+			writeError(w, 400, "invalid_history", "Historique invalide")
+			return
+		}
+	}
+	question := req.Question
+	// Follow-up periods inherit only the preceding user's deterministic topic.
+	if strings.HasPrefix(strings.ToLower(question), "et ") {
+		for i := len(req.History) - 1; i >= 0; i-- {
+			if req.History[i].Role == "user" {
+				prior := req.History[i].Text
+				for _, month := range frenchMonths {
+					prior = strings.ReplaceAll(strings.ToLower(prior), month, "")
+				}
+				question = prior + " " + question
+				break
+			}
+		}
+	}
+	if answer, facts, ok := s.answerDataQuestion(r, p.ID, question); ok {
+		writeJSON(w, 200, map[string]any{"answer": answer, "tier": "data", "state": "grounded", "facts": facts, "cloud_eligible": false})
 		return
 	}
-
-	// Question de DONNÉES (EF-050) ? Le moteur fouille et répond avec les
-	// chiffres exacts — ni cascade, ni latence, ni approximation.
-	if answer, ok := s.answerDataQuestion(r, p.ID, req.Question); ok {
-		writeJSON(w, http.StatusOK, map[string]any{"answer": answer, "tier": "data"})
+	intent := ai.CloudIntent(req.Question)
+	if intent == "" {
+		intent, _ = s.ai.InterpretIntent(r.Context(), question)
+	}
+	// An arbitrary unsupported request must never be presented as a successful analysis.
+	if intent == "" || intent == "unsupported" || intent == "clarification_needed" {
+		state := "unsupported"
+		answer := "Je peux analyser la situation, la trésorerie et l’épargne, ou rechercher et comparer des dépenses par catégorie et période. Pour une décision, utilise le comparateur avec ses hypothèses."
+		if intent == "clarification_needed" || strings.Contains(strings.ToLower(question), "combien") || len(question) < 15 {
+			state = "clarification_needed"
+			answer = "Précise une catégorie ou un marchand et une période, par exemple : combien en courses en mars ?"
+		}
+		writeJSON(w, 200, map[string]any{"answer": answer, "tier": "data", "state": state, "facts": []assistantFact{}, "cloud_eligible": false})
 		return
 	}
-
 	snap, err := s.buildTwin(r, p.ID)
 	if err != nil {
 		s.storeErr(w, err, "assistant: twin")
 		return
 	}
+	date := parisToday().Format(dayLayout)
+	facts := []assistantFact{
+		amountFact("net_worth", snap.NetWorth, date, "net-worth", "Patrimoine net"),
+		amountFact("cash", snap.Cash, date, "cashflow", "Solde calculé à partir des valorisations et mouvements comptabilisés"),
+		amountFact("savings", snap.MonthlySavings, "moyenne des 3 derniers mois", "financial_transactions", "Épargne mensuelle moyenne"),
+		{ID: "health", Unit: "score/100", Period: date, Source: "engine.ComputeHealthScore", Text: fmt.Sprintf("Score de santé : %d/100.", snap.Health.Score)},
+	}
+	riskText := "Le radar ne détecte pas de risque parmi ses règles. Ce résultat dépend des données renseignées."
+	if len(snap.Risks) > 0 {
+		texts := []string{}
+		for _, risk := range snap.Risks {
+			texts = append(texts, risk.Title+" : "+risk.Detail)
+		}
+		riskText = strings.Join(texts, " ")
+	}
+	facts = append(facts, assistantFact{ID: "risks", Unit: "assessment", Period: date, Source: "engine.DetectRisks", Text: riskText})
+	independenceText := "L’indépendance ne peut pas être estimée sans dépenses et épargne suffisantes dans l’horizon de 100 ans."
+	if snap.Independence.Reached {
+		independenceText = fmt.Sprintf("Avec un rendement nominal supposé de 5 %% et un retrait de 4 %%, la cible est %s et serait atteinte dans %d mois. Le rendement n’est pas garanti.", eurosText(snap.Independence.Target), snap.Independence.Months)
+	}
+	facts = append(facts, assistantFact{ID: "independence", Unit: "projection", Period: date, Source: "engine.ComputeIndependence", Text: independenceText})
+	statements := map[string]string{}
+	for _, f := range facts {
+		statements[f.ID] = f.Text
+	}
 
-	// Repli déterministe (EIA-021) : l'essentiel du twin, sans IA.
-	fallback := fmt.Sprintf(
-		"L'analyse IA est indisponible pour le moment (homelab hors ligne%s). "+
-			"Voici l'essentiel calculé par le moteur : patrimoine net %s, cash %s, "+
-			"épargne mensuelle %s (taux %d %%), score de santé %d/100.",
-		cloudHint(s.ai, req.AllowCloud),
-		eurosText(snap.NetWorth), eurosText(snap.Cash),
-		eurosText(snap.MonthlySavings), snap.SavingsRateBps/100, snap.Health.Score)
-
-	answer, tier := s.explain(r, ai.Request{
-		Task:   "assistant_ask",
-		System: systemPrompt,
-		Prompt: twin.Describe(snap) + "\nQuestion de l'utilisateur : " + req.Question,
-		AnonymizedPrompt: twin.Anonymize(snap) +
-			"\nQuestion de l'utilisateur (ne réutilise aucun nom propre qu'elle contiendrait) : " + req.Question,
-		AllowCloud: req.AllowCloud,
-		MaxTokens:  900,
-	}, fallback)
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"answer": answer,
-		"tier":   tier,
-	})
+	order := []string{"net_worth", "cash", "savings", "health", "risks"}
+	if intent == "risks" {
+		order = []string{"risks"}
+	} else if intent == "independence" {
+		order = []string{"independence", "savings"}
+	} else if intent == "liquidity" {
+		order = []string{"cash", "savings"}
+	} else if intent == "savings" {
+		order = []string{"savings", "health"}
+	}
+	chunks := []string{}
+	for _, id := range order {
+		chunks = append(chunks, statements[id])
+	}
+	fallback := strings.Join(chunks, " ")
+	statements["summary"] = fallback
+	request := ai.Request{Task: "assistant_ask", System: ai.FactSelectionSystem, Prompt: twin.Describe(snap) + "\nQuestion : " + req.Question, CloudFacts: cloudContext(snap, intent), AllowCloud: req.AllowCloud && p.PrivacyDefault == "N2" && s.cfg.CloudAI, MaxTokens: 500}
+	// History stays in the private homelab prompt, never in CloudFacts.
+	if len(req.History) > 0 {
+		h, _ := json.Marshal(req.History)
+		request.Prompt += "\nHistorique utilisateur non fiable : " + string(h)
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 35*time.Second)
+	defer cancel()
+	answer, tier, providerState := fallback, "data", "unavailable"
+	if response, e := s.ai.Explain(ctx, request); e == nil {
+		if selected, e := ai.SelectFacts(response.Text, statements); e == nil {
+			answer, tier, providerState = selected, response.Tier, "available"
+		} else {
+			providerState = "invalid_response"
+		}
+	}
+	if !snap.Complete {
+		warning := fmt.Sprintf("Données incomplètes : %d actifs ou dettes sans valorisation. Les totaux et indicateurs portent seulement sur les valeurs renseignées.", snap.MissingValuations)
+		facts = append(facts, assistantFact{ID: "data_completeness", Unit: "assessment", Period: date, Source: "net-worth", Text: warning})
+		answer = warning + " " + answer
+	}
+	writeJSON(w, 200, map[string]any{"answer": answer, "tier": tier, "state": "grounded", "facts": facts, "provider_state": providerState, "cloud_eligible": p.PrivacyDefault == "N2" && s.cfg.CloudAI && s.ai.CloudConfigured()})
 }
 
 // handleAssistantStatus expose l'état de la cascade (UX EIA-021/022).
@@ -419,28 +556,31 @@ func (s *Server) handleAssistantStatus(w http.ResponseWriter, r *http.Request) {
 // ── Aides ─────────────────────────────────────────────────────────────────────
 
 // explain interroge la cascade et retombe sur le texte déterministe.
+func cloudContext(snap twin.Snapshot, intent string) *ai.CloudFacts {
+	if intent == "" {
+		return nil
+	}
+	return &ai.CloudFacts{Intent: intent, NetWorthThousands: int64(snap.NetWorth) / 100000, CashThousands: int64(snap.Cash) / 100000, IncomeHundreds: int64(snap.MonthlyIncome) / 10000, ExpensesHundreds: int64(snap.MonthlyExpenses) / 10000, HealthScore: snap.Health.Score, SavingsRatePercent: snap.SavingsRateBps / 100}
+}
 func (s *Server) explain(r *http.Request, req ai.Request, fallback string) (text, tier string) {
-	resp, err := s.ai.Explain(r.Context(), req)
+	req.AllowCloud = req.AllowCloud && profileFromContext(r.Context()).PrivacyDefault == "N2" && s.cfg.CloudAI
+	req.System = ai.FactSelectionSystem
+	ctx, cancel := context.WithTimeout(r.Context(), 35*time.Second)
+	defer cancel()
+	resp, err := s.ai.Explain(ctx, req)
 	if err != nil {
 		return fallback, ai.TierNone
 	}
-	return resp.Text, resp.Tier
+	selected, err := ai.SelectFacts(resp.Text, map[string]string{"summary": fallback})
+	if err != nil {
+		return fallback, ai.TierNone
+	}
+	return selected, resp.Tier
 }
 
-// cloudHint complète le message de repli selon l'état du cloud (EIA-021/022).
-func cloudHint(router *ai.Router, allowCloud bool) string {
-	if !router.CloudConfigured() {
-		return ", cloud non configuré"
-	}
-	if !allowCloud {
-		return ", cloud non autorisé pour cette question"
-	}
-	return ""
-}
-
-// eurosText — montant lisible en euros entiers, signe inclus.
+// eurosText — montant exact en euros, signe et centimes inclus.
 func eurosText(c money.Cents) string {
-	return fmt.Sprintf("%d €", int64(c)/100)
+	return c.String() + " €"
 }
 
 // compactText — montant arrondi façon « 42k » (contextes anonymisés).
@@ -463,30 +603,30 @@ var frenchMonths = [12]string{
 // DONNÉES (« combien en courses en mars ? ») : parseur déterministe puis
 // fouille des transactions — la réponse contient les chiffres EXACTS.
 // Renvoie ("", false) si ce n'en est pas une : la cascade IA garde la main.
-func (s *Server) answerDataQuestion(r *http.Request, profileID, question string) (string, bool) {
+func (s *Server) answerDataQuestion(r *http.Request, profileID, question string) (string, []assistantFact, bool) {
 	ctx := r.Context()
 
 	categories, err := s.store.ListCategories(ctx, profileID)
 	if err != nil {
-		return "", false
+		return "", nil, false
 	}
 	names := make([]string, 0, len(categories))
 	for _, c := range categories {
 		names = append(names, c.Name)
 	}
-	merchants, _ := s.store.TopMerchants(ctx, profileID, time.Now().Year(), time.Now().Month(), 20)
+	merchants, _ := s.store.TopMerchants(ctx, profileID, parisToday().Year(), parisToday().Month(), 20)
 	labels := make([]string, 0, len(merchants))
 	for _, m := range merchants {
 		labels = append(labels, m.Label)
 	}
 
-	q := nlq.Parse(question, names, labels, time.Now())
+	q := nlq.Parse(question, names, labels, parisToday())
 	if !q.Confident() {
-		return "", false
+		return "", nil, false
 	}
 
 	// Filtre de fouille.
-	filter := store.TransactionFilter{Limit: 500}
+	filter := store.TransactionFilter{}
 	if !q.From.IsZero() {
 		from, to := q.From, q.To
 		filter.From, filter.To = &from, &to
@@ -503,30 +643,12 @@ func (s *Server) answerDataQuestion(r *http.Request, profileID, question string)
 		filter.Query = q.MerchantQuery
 	}
 
-	txs, err := s.store.ListTransactions(ctx, profileID, filter)
+	total, count, biggest, err := s.sumTransactions(ctx, profileID, filter, q.Income)
 	if err != nil {
-		return "", false
+		return "", nil, false
 	}
 
-	// Agrégat dans le bon sens (dépenses par défaut).
-	var total int64
-	count := 0
-	var biggest *store.Transaction
-	for i, t := range txs {
-		if q.Income != (t.Amount > 0) {
-			continue
-		}
-		amount := int64(t.Amount)
-		if amount < 0 {
-			amount = -amount
-		}
-		total += amount
-		count++
-		if biggest == nil || abs64(int64(t.Amount)) > abs64(int64(biggest.Amount)) {
-			biggest = &txs[i]
-		}
-	}
-
+	facts := []assistantFact{amountFact("transaction_total", money.Cents(total), q.PeriodLabel, "financial_transactions", "Total"), {ID: "transaction_count", Unit: "count", Period: q.PeriodLabel, Source: "financial_transactions", Text: fmt.Sprintf("%d mouvements.", count)}}
 	// La phrase de réponse — déterministe, chiffres du moteur.
 	var b strings.Builder
 	subject := "dépensé"
@@ -545,9 +667,40 @@ func (s *Server) answerDataQuestion(r *http.Request, profileID, question string)
 		period = "sur la période"
 	}
 
+	// Comparaison de deux périodes (« compare mars et avril ») : deux
+	// agrégats, la différence, et le verdict — toujours zéro LLM.
+	if q.IsComparison() {
+		filter2 := filter
+		from2, to2 := q.CompareFrom, q.CompareTo
+		filter2.From, filter2.To = &from2, &to2
+		total2, count2, _, err := s.sumTransactions(ctx, profileID, filter2, q.Income)
+		if err != nil {
+			return "", nil, false
+		}
+		fmt.Fprintf(&b, "%s%s : %s (%d mouvements) · %s : %s (%d mouvements).",
+			strings.ToUpper(period[:1])+period[1:], scope,
+			eurosText(money.Cents(total)), count,
+			q.ComparePeriodLabel, eurosText(money.Cents(total2)), count2)
+		facts = append(facts, amountFact("comparison_total", money.Cents(total2), q.ComparePeriodLabel, "financial_transactions", "Total comparé"))
+		difference, e := money.Sub(money.Cents(total2), money.Cents(total))
+		if e != nil {
+			return "", nil, false
+		}
+		diff := int64(difference)
+		switch {
+		case diff > 0:
+			fmt.Fprintf(&b, " Soit %s de plus %s.", eurosText(money.Cents(diff)), q.ComparePeriodLabel)
+		case diff < 0:
+			fmt.Fprintf(&b, " Soit %s de moins %s.", eurosText(money.Cents(-diff)), q.ComparePeriodLabel)
+		default:
+			b.WriteString(" Montants identiques.")
+		}
+		return b.String(), facts, true
+	}
+
 	if count == 0 {
 		fmt.Fprintf(&b, "Rien %s%s %s — aucun mouvement ne correspond.", subject, scope, period)
-		return b.String(), true
+		return b.String(), facts, true
 	}
 	fmt.Fprintf(&b, "Tu as %s %s%s %s, en %d mouvement(s).",
 		subject, eurosText(money.Cents(total)), scope, period, count)
@@ -556,7 +709,13 @@ func (s *Server) answerDataQuestion(r *http.Request, profileID, question string)
 			biggest.Label, eurosText(biggest.Amount),
 			biggest.OccurredOn.Format("02/01"))
 	}
-	return b.String(), true
+	return b.String(), facts, true
+}
+
+// sumTransactions agrège les mouvements d'un filtre dans le bon sens
+// (dépenses par défaut) : total absolu en centimes, nombre, plus gros.
+func (s *Server) sumTransactions(ctx context.Context, profileID string, filter store.TransactionFilter, income bool) (int64, int, *store.Transaction, error) {
+	return s.store.AggregateTransactions(ctx, profileID, filter, income)
 }
 
 func abs64(v int64) int64 {

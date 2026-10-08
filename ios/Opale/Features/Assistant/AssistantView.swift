@@ -12,6 +12,9 @@ struct AssistantView: View {
     @State private var messages: [ChatMessage] = []
     @State private var draft = ""
     @State private var isThinking = false
+    @State private var requestTask: Task<Void, Never>?
+    @State private var facts: [AssistantFact] = []
+    @State private var confirmCloud = false
     @State private var risks: [Risk] = []
     @State private var status: AssistantStatus?
     @State private var showDecision = false
@@ -68,9 +71,10 @@ struct AssistantView: View {
                         if let status {
                             Label(status.homelabAvailable ? "Homelab en ligne" : "Homelab hors ligne",
                                   systemImage: status.homelabAvailable ? "server.rack" : "wifi.slash")
-                            Label(status.cloudConfigured ? "Cloud configuré (anonymisé)" : "Cloud non configuré",
+                            Label(status.cloudConfigured ? "Cloud configuré · opt-in" : "Cloud non configuré",
                                   systemImage: "cloud")
                         }
+                        Button("Effacer la conversation", role: .destructive) { requestTask?.cancel(); messages = []; facts = []; persistMessages() }
                         if LocalAI.isAvailable {
                             Label("IA locale iPhone active", systemImage: "iphone")
                         }
@@ -79,7 +83,15 @@ struct AssistantView: View {
                     }
                 }
             }
-            .task { await load() }
+            .task {
+                messages = DiskCache.load([ChatMessage].self, key: "chat-" + session.profileKey)?.value ?? []
+                await load()
+            }
+            .onDisappear { requestTask?.cancel() }
+            .alert("Utiliser le cloud pour cette demande ?", isPresented: $confirmCloud) {
+                Button("Envoyer les agrégats") { if let question = pendingCloudQuestion { ask(question, allowCloud: true) } }
+                Button("Annuler", role: .cancel) {}
+            } message: { Text("Seuls une intention structurée et des agrégats minimisés sont transmis. Ces montants restent sensibles. Les textes libres et documents ne sont pas transmis. Ton profil doit autoriser le cloud.") }
             .sheet(isPresented: $showDecision) {
                 DecisionSheet()
             }
@@ -200,12 +212,11 @@ struct AssistantView: View {
                     ))
             }
             // EIA-021/022 : proposer l'escalade cloud, avec consentement.
-            if let question = pendingCloudQuestion {
+            if pendingCloudQuestion != nil {
                 Button {
-                    pendingCloudQuestion = nil
-                    ask(question, allowCloud: true)
+                    confirmCloud = true
                 } label: {
-                    Label("Analyser avec le modèle cloud (données anonymisées)",
+                    Label("Analyse cloud · agrégats sensibles",
                           systemImage: "cloud.fill")
                         .font(.footnote.weight(.semibold))
                         .padding(.horizontal, 14)
@@ -213,6 +224,17 @@ struct AssistantView: View {
                 }
                 .buttonStyle(.plain)
                 .glassEffect(.regular.tint(OpaleTheme.accent.opacity(0.2)).interactive(), in: .capsule)
+            }
+            if !facts.isEmpty {
+                VStack(alignment: .leading) {
+                    ForEach(facts) { fact in
+                        VStack(alignment: .leading) {
+                            Text(fact.text).sensitive()
+                            if let value = fact.value_cents { AmountText(cents: value) }
+                            Text("\(fact.period) · \(fact.source)").font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                }.padding().glassEffect(.regular, in: .rect(cornerRadius: 16))
             }
             if isThinking {
                 HStack {
@@ -266,50 +288,40 @@ struct AssistantView: View {
         }
         isThinking = true
         pendingCloudQuestion = nil
-        Task {
-            defer { isThinking = false }
+        let profileKey = session.profileKey
+        let api = session.api
+        let history = messages.dropLast().suffix(12).map { APIClient.HistoryMessage(role: $0.role == .user ? "user" : "assistant", text: $0.text) }
+        requestTask = Task {
+            defer { if session.profileKey == profileKey { isThinking = false; persistMessages() } }
 
             // N1 (EIA-001) : le modèle local de l'iPhone d'abord — rien ne
             // quitte l'appareil. Indisponible/insuffisant → cascade backend.
-            if !allowCloud, let local = await askLocally(question) {
+            if !allowCloud, let local = await LocalAI.conceptualAnswer(question) {
+                guard !Task.isCancelled, session.profileKey == profileKey else { return }
                 messages.append(ChatMessage(role: .assistant, text: local, tier: "n1"))
                 return
             }
 
             do {
-                let resp = try await session.api.ask(question: question, allowCloud: allowCloud)
-                messages.append(ChatMessage(role: .assistant, text: resp.answer, tier: resp.tier))
+                let resp = try await api.ask(question: question, allowCloud: allowCloud, history: history)
+                guard !Task.isCancelled, session.profileKey == profileKey else { return }
+                facts = resp.facts ?? []
+                messages.append(ChatMessage(role: .assistant, text: resp.answer, tier: resp.tier, state: resp.state, providerState: resp.providerState))
                 // Repli moteur + cloud configuré → proposer l'escalade (EIA-021).
-                if resp.tier.isEmpty, status?.cloudConfigured == true, !allowCloud {
+                if resp.cloudEligible == true, status?.cloudConfigured == true, !allowCloud {
                     pendingCloudQuestion = question
                 }
             } catch {
+                guard !Task.isCancelled, session.profileKey == profileKey else { return }
                 messages.append(ChatMessage(role: .assistant,
                     text: "Impossible de répondre : \(error.localizedDescription)", tier: ""))
             }
         }
     }
 
-    /// Tente la réponse sur le modèle local (N1) avec un contexte compact
-    /// calculé par le moteur — jamais envoyé hors de l'appareil.
-    private func askLocally(_ question: String) async -> String? {
-        guard LocalAI.isAvailable else { return nil }
-        guard let netWorth = try? await session.api.netWorth(),
-              let health = try? await session.api.healthScore() else { return nil }
-
-        var context = """
-        Situation (chiffres exacts du moteur) :
-        - Patrimoine net : \(MoneyFormat.eurosWhole(netWorth.net))
-        - Actifs : \(MoneyFormat.eurosWhole(netWorth.assetsTotal)) ; dettes : \(MoneyFormat.eurosWhole(netWorth.liabilitiesTotal))
-        - Score de santé financière : \(health.score)/100
-        """
-        for c in health.components {
-            context += "\n  - \(c.name) : \(c.score)/\(c.max) (\(c.comment))"
-        }
-        for r in risks {
-            context += "\n- Risque (\(r.severity)) : \(r.title)"
-        }
-        return await LocalAI.answer(context: context, question: question)
+    private func persistMessages() {
+        messages = Array(messages.suffix(20))
+        DiskCache.save(messages, key: "chat-" + session.profileKey)
     }
 
     private func load() async {
@@ -323,12 +335,14 @@ struct AssistantView: View {
 
 // MARK: - Messages
 
-struct ChatMessage: Identifiable, Hashable {
-    enum Role { case user, assistant }
-    let id = UUID()
+struct ChatMessage: Identifiable, Hashable, Codable {
+    enum Role: String, Codable { case user, assistant }
+    var id = UUID()
     let role: Role
     let text: String
     let tier: String // "n2" | "n3" | ""
+    var state: String? = nil
+    var providerState: String? = nil
 }
 
 /// Une bulle de conversation, style verre.
@@ -340,9 +354,12 @@ private struct ChatBubble: View {
             if message.role == .user { Spacer(minLength: 40) }
             VStack(alignment: .leading, spacing: 4) {
                 Text(message.text)
+                    .sensitive()
                     .font(.subheadline)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if message.role == .assistant {
+                    if let state = message.state, state != "grounded" { Text(state == "clarification_needed" ? "Précision nécessaire" : state == "unsupported" ? "Demande non prise en charge" : "Réponse du moteur").font(.caption2) }
+                    if let provider = message.providerState, ["unavailable", "invalid", "timeout"].contains(provider) { Text("IA indisponible ou réponse non vérifiée · repli sur le moteur").font(.caption2) }
                     Label(tierLabel, systemImage: tierIcon)
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
@@ -365,8 +382,8 @@ private struct ChatBubble: View {
         case "data": "Moteur — réponse exacte"
         case "n1": "iPhone — 100 % local"
         case "n2": "Homelab — privé"
-        case "n3": "Cloud — anonymisé"
-        default: "Moteur — hors ligne"
+        case "n3": "Cloud — agrégats minimisés"
+        default: "Moteur déterministe"
         }
     }
 

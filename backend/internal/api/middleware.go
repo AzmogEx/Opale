@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -48,11 +49,14 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 		start := time.Now()
 		sr := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(sr, r)
+		route := normalizedRoute(r)
+		duration := time.Since(start)
+		s.metrics.record(r.Method, route, sr.status, duration)
 		s.log.Info("http",
-			"method", r.Method,
-			"path", r.URL.Path,
+			"method", metricMethod(r.Method),
+			"route", route,
 			"status", sr.status,
-			"duration_ms", time.Since(start).Milliseconds(),
+			"duration_ms", duration.Milliseconds(),
 			"request_id", r.Context().Value(ctxKeyRequestID),
 		)
 	})
@@ -63,7 +67,7 @@ func (s *Server) recoverer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
-				s.log.Error("panic", "recover", rec, "path", r.URL.Path)
+				s.log.Error("panic recovered", "route", normalizedRoute(r))
 				writeError(w, http.StatusInternalServerError, "internal", "erreur interne")
 			}
 		}()
@@ -75,6 +79,8 @@ func (s *Server) recoverer(next http.Handler) http.Handler {
 // Accepte « Authorization: Bearer <token> » ou l'en-tête « X-Session-Token ».
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		token := r.Header.Get("X-Session-Token")
 		if token == "" {
 			if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
@@ -88,7 +94,11 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 
 		profile, err := s.store.ProfileForSession(r.Context(), auth.HashToken(token))
 		if err != nil {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "session invalide ou expirée")
+			if errors.Is(err, store.ErrNotFound) {
+				writeError(w, http.StatusUnauthorized, "unauthorized", "session invalide ou expirée")
+			} else {
+				writeError(w, 503, "unavailable", "serveur temporairement indisponible")
+			}
 			return
 		}
 

@@ -1,15 +1,18 @@
 package engine
 
-import "github.com/opale-app/opale/internal/money"
+import (
+	"github.com/opale-app/opale/internal/money"
+	"math/big"
+)
 
 // HealthInputs — mesures nécessaires au score de santé financière (EF-015).
 // Toutes rassemblées par le store ; le calcul reste pur et testable.
 type HealthInputs struct {
-	Income3M   money.Cents // revenus des 3 derniers mois
-	Expenses3M money.Cents // dépenses des 3 derniers mois (valeur positive)
-	Cash       money.Cents // cash disponible (comptes + livrets)
-	Assets     money.Cents // total actifs
-	Liabilities money.Cents // total dettes
+	Income3M     money.Cents // revenus des 3 derniers mois
+	Expenses3M   money.Cents // dépenses des 3 derniers mois (valeur positive)
+	Cash         money.Cents // cash disponible (comptes + livrets)
+	Assets       money.Cents // total actifs
+	Liabilities  money.Cents // total dettes
 	FixedMonthly money.Cents // dépenses fixes mensuelles (récurrentes, positive)
 	// Valeur par type d'actif (répartition / diversification).
 	AssetKindValues map[string]money.Cents
@@ -25,8 +28,9 @@ type HealthComponent struct {
 
 // HealthScore — le score global /100 (EF-015).
 type HealthScore struct {
-	Score      int               `json:"score"`
-	Components []HealthComponent `json:"components"`
+	Score              int               `json:"score"`
+	Components         []HealthComponent `json:"components"`
+	EmergencyFundReady bool              `json:"emergency_fund_ready"`
 }
 
 // ComputeHealthScore calcule le score de santé financière /100, en cinq
@@ -44,8 +48,8 @@ func ComputeHealthScore(in HealthInputs) HealthScore {
 	{
 		score, comment := 0, "aucun revenu enregistré sur 3 mois"
 		if in.Income3M > 0 {
-			saved := int64(in.Income3M) - int64(in.Expenses3M)
-			rateBps := saved * 10_000 / int64(in.Income3M) // peut être négatif
+			saved := new(big.Int).Sub(big.NewInt(int64(in.Income3M)), big.NewInt(int64(in.Expenses3M)))
+			rateBps := boundedIndicator(saved, big.NewInt(int64(in.Income3M)), 10000, 0, 10000) // peut être négatif
 			score = scaleUp(rateBps, 0, 2_000, 25)
 			switch {
 			case rateBps <= 0:
@@ -65,7 +69,7 @@ func ComputeHealthScore(in HealthInputs) HealthScore {
 		score, comment := 0, "dépenses mensuelles inconnues"
 		if monthly > 0 {
 			// mois de réserve × 100 pour garder de la précision entière
-			monthsX100 := int64(in.Cash) * 100 / monthly
+			monthsX100 := indicator(int64(in.Cash), monthly, 100, 0, 600)
 			score = scaleUp(monthsX100, 0, 600, 25)
 			switch {
 			case monthsX100 >= 600:
@@ -88,7 +92,7 @@ func ComputeHealthScore(in HealthInputs) HealthScore {
 			if in.Assets <= 0 {
 				score, comment = 0, "dettes sans actifs en face"
 			} else {
-				ratioBps := int64(in.Liabilities) * 10_000 / int64(in.Assets)
+				ratioBps := indicator(int64(in.Liabilities), int64(in.Assets), 10000, 0, 10000)
 				score = scaleDown(ratioBps, 1_000, 6_000, 20)
 				switch {
 				case ratioBps <= 1_000:
@@ -105,16 +109,13 @@ func ComputeHealthScore(in HealthInputs) HealthScore {
 
 	// ── Diversification /15 ───────────────────────────────────────────────
 	{
-		var total int64
-		for _, v := range in.AssetKindValues {
-			total += int64(v)
-		}
+		total := positiveAssetTotal(in.AssetKindValues)
 		score, comment := 0, "aucun actif"
-		if total > 0 {
+		if total.Sign() > 0 {
 			significant := 0
 			domBps := int64(0)
 			for _, v := range in.AssetKindValues {
-				share := int64(v) * 10_000 / total
+				share := boundedIndicator(big.NewInt(int64(max(v, 0))), total, 10000, 0, 10000)
 				if share > 500 { // > 5 %
 					significant++
 				}
@@ -141,7 +142,7 @@ func ComputeHealthScore(in HealthInputs) HealthScore {
 		monthlyIncome := int64(in.Income3M) / 3
 		score, comment := 0, "revenus mensuels inconnus"
 		if monthlyIncome > 0 {
-			ratioBps := int64(in.FixedMonthly) * 10_000 / monthlyIncome
+			ratioBps := indicator(int64(in.FixedMonthly), monthlyIncome, 10000, 0, 10000)
 			score = scaleDown(ratioBps, 4_000, 8_000, 15)
 			switch {
 			case ratioBps <= 4_000:
@@ -159,7 +160,11 @@ func ComputeHealthScore(in HealthInputs) HealthScore {
 	for _, c := range comps {
 		total += c.Score
 	}
-	return HealthScore{Score: total, Components: comps}
+	// Six months at the observed three-month spending rate equals twice the
+	// three-month total. Do not truncate the monthly average before comparing.
+	needed := new(big.Int).Mul(big.NewInt(int64(in.Expenses3M)), big.NewInt(2))
+	ready := in.Expenses3M > 0 && big.NewInt(int64(in.Cash)).Cmp(needed) >= 0
+	return HealthScore{Score: total, Components: comps, EmergencyFundReady: ready}
 }
 
 // scaleUp : interpolation linéaire croissante — v ≤ lo → 0, v ≥ hi → max.

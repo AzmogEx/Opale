@@ -4,6 +4,7 @@ import SwiftUI
 /// la promesse, la confidentialité, le moteur. Court, beau, désactivable.
 struct OnboardingView: View {
 	var onDone: () -> Void
+    var onSkip: (() -> Void)? = nil
 
 	@State private var page = 0
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -24,7 +25,7 @@ struct OnboardingView: View {
 					pageView(
 						icon: "lock.shield.fill",
 						title: "Privé,\npar construction",
-						message: "Tes données vivent chez toi (ton serveur). L'IA tourne d'abord sur ton iPhone, puis sur ton homelab — le cloud ne voit jamais que des montants arrondis et anonymes, avec ton accord."
+						message: "Tes données vivent chez toi (ton serveur). L'IA tourne d'abord sur ton iPhone, puis sur ton homelab — le cloud reçoit uniquement des agrégats minimisés et arrondis avec ton accord. Ces montants restent sensibles."
 					)
 					.tag(1)
 
@@ -55,7 +56,7 @@ struct OnboardingView: View {
 				.padding(.horizontal, 32)
 				.sensoryFeedback(.impact(weight: .light), trigger: page)
 
-				Button("Passer") { onDone() }
+				Button("Passer") { (onSkip ?? onDone)() }
 					.font(.footnote)
 					.foregroundStyle(.secondary)
 					.padding(.bottom, 12)

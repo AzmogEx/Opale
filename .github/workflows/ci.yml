@@ -74,3 +74,72 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Unit tests (dates, money, session isolation)
+        run: npm test
+
+      - name: Browser privacy and responsive tests
+        run: |
+          npx playwright install --with-deps chromium
+          npm run dev -- --host 127.0.0.1 > /tmp/opale-vite.log 2>&1 &
+          for attempt in $(seq 1 30); do curl -fsS http://127.0.0.1:5173/login >/dev/null && break || sleep 1; done
+          npm run test:e2e
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: web-failure-traces
+          path: web/test-results
+          retention-days: 7
+
+  end-to-end:
+    name: Docker stack and real API browser journeys
+    runs-on: ubuntu-latest
+    env:
+      OPALE_DB_PASSWORD: isolated_ci_database
+      OPALE_DB_NAME: opale_ci
+      OPALE_VAULT_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      OPALE_CLOUD_AI: "off"
+      OPALE_AUTO_QUOTES: "off"
+      OPALE_WEB_URL: http://127.0.0.1:3000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build and start isolated Compose stack
+        run: |
+          docker compose config --quiet
+          docker compose up -d --build --wait --wait-timeout 180
+          curl --fail http://127.0.0.1:3000/readyz
+      - name: Test browser journeys through nginx
+        working-directory: web
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          npm run test:e2e:integration
+      - name: Verify backup and isolated restore
+        run: |
+          ./scripts/backup.sh /tmp/opale-backups
+          ./scripts/restore.sh /tmp/opale-backups/*.dump opale_restore_ci
+          docker compose exec -T db psql -U opale -d opale_restore_ci -v ON_ERROR_STOP=1 -c 'SELECT count(*) FROM profiles;'
+      - name: Collect service diagnostics
+        if: failure()
+        run: docker compose logs --no-color --tail=100
+      - name: Stop isolated stack
+        if: always()
+        run: docker compose down --volumes
+
+  ios:
+    name: iOS 26 simulator unit tests
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate Xcode project
+        run: brew install xcodegen && xcodegen generate --spec ios/project.yml
+      - name: Simulator tests (local ad hoc signing for Keychain)
+        run: |
+          DEVICE=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for runtime,devices in d["devices"].items() if "iOS-26" in runtime for x in devices if "iPhone" in x["name"]))')
+          xcodebuild -project ios/Opale.xcodeproj -scheme Opale -destination "platform=iOS Simulator,id=$DEVICE" CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO DEVELOPMENT_TEAM= COMPILER_INDEX_STORE_ENABLE=NO -collect-test-diagnostics never test -only-testing:OpaleTests/FinancialPresentationTests -only-testing:OpaleTests/SessionIsolationTests

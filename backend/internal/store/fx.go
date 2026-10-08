@@ -17,13 +17,18 @@ type FXRate struct {
 	Currency  string    `json:"currency"`
 	RateMicro int64     `json:"rate_micro"` // 1 unité = RateMicro micro-euros
 	UpdatedAt time.Time `json:"updated_at"`
+	AsOf      string    `json:"as_of,omitempty"`
+	Source    string    `json:"source,omitempty"`
 }
 
 // ListFXRates — les taux connus + les devises utilisées SANS taux (comptées
-// 1:1 dans le patrimoine, à signaler à l'utilisateur).
-func (s *Store) ListFXRates(ctx context.Context) ([]FXRate, []string, error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT currency, rate_micro, updated_at FROM fx_rates ORDER BY currency`)
+// totals blocked until an applicable rate is supplied).
+func (s *Store) ListFXRates(ctx context.Context, profileIDs ...string) ([]FXRate, []string, error) {
+	profileID := ""
+	if len(profileIDs) > 0 {
+		profileID = profileIDs[0]
+	}
+	rows, err := s.pool.Query(ctx, `SELECT DISTINCT ON(currency) currency,rate_micro,updated_at,as_of::text,source FROM (SELECT currency,rate_micro,updated_at,as_of,source,0 priority FROM fx_rates UNION ALL SELECT currency,rate_micro,updated_at,as_of,source,1 priority FROM profile_fx_history WHERE profile_id::text=$1 AND as_of<=CURRENT_DATE) r ORDER BY currency,priority DESC,as_of DESC`, profileID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("ListFXRates: %w", err)
 	}
@@ -33,7 +38,7 @@ func (s *Store) ListFXRates(ctx context.Context) ([]FXRate, []string, error) {
 	rated := map[string]bool{"EUR": true}
 	for rows.Next() {
 		var r FXRate
-		if err := rows.Scan(&r.Currency, &r.RateMicro, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.Currency, &r.RateMicro, &r.UpdatedAt, &r.AsOf, &r.Source); err != nil {
 			return nil, nil, fmt.Errorf("ListFXRates: %w", err)
 		}
 		rated[r.Currency] = true
@@ -43,11 +48,11 @@ func (s *Store) ListFXRates(ctx context.Context) ([]FXRate, []string, error) {
 		return nil, nil, err
 	}
 
-	// Devises en usage (actifs + passifs, tous profils du foyer confondus).
+	// Usage scoped to the caller; workers may omit the filter.
 	used, err := s.pool.Query(ctx, `
-		SELECT DISTINCT currency FROM assets WHERE NOT archived
-		UNION SELECT DISTINCT currency FROM liabilities WHERE NOT archived
-		ORDER BY currency`)
+		SELECT DISTINCT currency FROM assets WHERE NOT archived AND ($1='' OR profile_id::text=$1)
+		UNION SELECT DISTINCT currency FROM liabilities WHERE NOT archived AND ($1='' OR profile_id::text=$1)
+		ORDER BY currency`, profileID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("ListFXRates: usage : %w", err)
 	}
@@ -96,4 +101,22 @@ func (s *Store) DeleteFXRate(ctx context.Context, currency string) error {
 // ConvertToEUR — conversion ponctuelle (affichage) : centimes × taux.
 func ConvertToEUR(value money.Cents, rateMicro int64) money.Cents {
 	return money.Cents(int64(value) * rateMicro / 1_000_000)
+}
+
+func (s *Store) UpsertProfileFX(ctx context.Context, owner, currency, day string, rate int64) (FXRate, error) {
+	var r FXRate
+	err := s.pool.QueryRow(ctx, `INSERT INTO profile_fx_history(profile_id,currency,as_of,rate_micro) VALUES($1,$2,$3,$4) ON CONFLICT(profile_id,currency,as_of) DO UPDATE SET rate_micro=$4,updated_at=now() RETURNING currency,rate_micro,updated_at,as_of::text,source`, owner, currency, day, rate).Scan(&r.Currency, &r.RateMicro, &r.UpdatedAt, &r.AsOf, &r.Source)
+	return r, err
+}
+func (s *Store) DeleteProfileFX(ctx context.Context, owner, currency string) error {
+	tag, e := s.pool.Exec(ctx, `DELETE FROM profile_fx_history WHERE profile_id=$1 AND currency=$2`, owner, currency)
+	if e == nil && tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return e
+}
+
+func (s *Store) UpsertReferenceFX(ctx context.Context, currency string, rate int64, day time.Time) error {
+	_, e := s.pool.Exec(ctx, `INSERT INTO fx_rates(currency,rate_micro,as_of,source) VALUES($1,$2,$3,'ECB') ON CONFLICT(currency) DO UPDATE SET rate_micro=EXCLUDED.rate_micro,as_of=EXCLUDED.as_of,source='ECB',updated_at=now() WHERE fx_rates.as_of<=EXCLUDED.as_of`, currency, rate, day)
+	return e
 }

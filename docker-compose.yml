@@ -1,60 +1,75 @@
-# Opale — pile de développement / homelab.
-# Lance PostgreSQL + le backend Go. En prod (Coolify), réutiliser la même image.
-
+# Copie .env.example vers .env. Les ports sont locaux ; expose uniquement le web via HTTPS.
 services:
   db:
     image: postgres:17-alpine
-    container_name: opale-db
     environment:
       POSTGRES_USER: ${OPALE_DB_USER:-opale}
-      POSTGRES_PASSWORD: ${OPALE_DB_PASSWORD:-opale}
+      POSTGRES_PASSWORD: ${OPALE_DB_PASSWORD:?Définir OPALE_DB_PASSWORD dans .env}
       POSTGRES_DB: ${OPALE_DB_NAME:-opale}
     ports:
-      - "${OPALE_DB_PORT:-5432}:5432"
+      - "127.0.0.1:${OPALE_DB_PORT:-5432}:5432"
     volumes:
       - opale_db:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${OPALE_DB_USER:-opale}"]
+      test: ["CMD-SHELL", "pg_isready -U ${OPALE_DB_USER:-opale} -d ${OPALE_DB_NAME:-opale}"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
     restart: unless-stopped
 
   api:
     build: ./backend
-    container_name: opale-api
     environment:
       OPALE_HTTP_ADDR: ":8080"
       OPALE_ENV: ${OPALE_ENV:-dev}
+      OPALE_LOG_LEVEL: ${OPALE_LOG_LEVEL:-info}
       OPALE_DB_HOST: db
       OPALE_DB_PORT: "5432"
       OPALE_DB_USER: ${OPALE_DB_USER:-opale}
-      OPALE_DB_PASSWORD: ${OPALE_DB_PASSWORD:-opale}
+      OPALE_DB_PASSWORD: ${OPALE_DB_PASSWORD:?Définir OPALE_DB_PASSWORD dans .env}
       OPALE_DB_NAME: ${OPALE_DB_NAME:-opale}
       OPALE_DB_SSLMODE: disable
-      # Optionnels (voir .env.example) : coffre, IA, banque.
+      OPALE_SESSION_TTL: ${OPALE_SESSION_TTL:-720h}
       OPALE_VAULT_KEY: ${OPALE_VAULT_KEY:-}
       OPALE_OLLAMA_URL: ${OPALE_OLLAMA_URL:-}
       OPALE_OLLAMA_MODEL: ${OPALE_OLLAMA_MODEL:-llama3.1:8b}
       OPALE_ANTHROPIC_API_KEY: ${OPALE_ANTHROPIC_API_KEY:-}
+      OPALE_CLOUD_AI: ${OPALE_CLOUD_AI:-off}
       OPALE_GC_SECRET_ID: ${OPALE_GC_SECRET_ID:-}
       OPALE_GC_SECRET_KEY: ${OPALE_GC_SECRET_KEY:-}
+      OPALE_GC_BASE_URL: ${OPALE_GC_BASE_URL:-}
+      OPALE_CORS_ORIGINS: ${OPALE_CORS_ORIGINS:-}
+      OPALE_AUTO_QUOTES: ${OPALE_AUTO_QUOTES:-off}
+      OPALE_APNS_KEY_P8: ${OPALE_APNS_KEY_P8:-}
+      OPALE_APNS_KEY_ID: ${OPALE_APNS_KEY_ID:-}
+      OPALE_APNS_TEAM_ID: ${OPALE_APNS_TEAM_ID:-}
+      OPALE_APNS_BUNDLE_ID: ${OPALE_APNS_BUNDLE_ID:-app.opale.ios}
+      OPALE_APNS_ENV: ${OPALE_APNS_ENV:-sandbox}
     ports:
-      - "8080:8080"
+      - "127.0.0.1:${OPALE_API_PORT:-8080}:8080"
     depends_on:
       db:
         condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=536870912,mode=1777
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
 
-  # Cockpit web : nginx sert la SPA et proxifie /v1 vers l'API
-  # (même origine → pas de CORS à configurer).
   web:
     build: ./web
-    container_name: opale-web
     ports:
-      - "${OPALE_WEB_PORT:-3000}:80"
+      - "127.0.0.1:${OPALE_WEB_PORT:-3000}:80"
     depends_on:
       - api
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/readyz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
 
 volumes:

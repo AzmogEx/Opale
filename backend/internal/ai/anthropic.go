@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -24,9 +25,10 @@ type Anthropic struct {
 var ErrRefused = errors.New("ai: requête refusée par le modèle cloud")
 
 // NewAnthropic construit le provider N3.
-func NewAnthropic(apiKey string) *Anthropic {
+func NewAnthropic(apiKey string, options ...option.RequestOption) *Anthropic {
+	options = append([]option.RequestOption{option.WithAPIKey(apiKey), option.WithMaxRetries(1), option.WithRequestTimeout(25 * time.Second)}, options...)
 	return &Anthropic{
-		client: anthropic.NewClient(option.WithAPIKey(apiKey)),
+		client: anthropic.NewClient(options...),
 		model:  anthropic.ModelClaudeFable5,
 	}
 }

@@ -1,141 +1,160 @@
 <script lang="ts">
-	// Porte de profils + PIN (EF-001/002) — miroir de ProfileGateView iOS.
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session.svelte';
 	import type { Profile } from '$lib/api';
-
+	import { messageOf } from '$lib/domain';
 	let profiles = $state<Profile[]>([]);
-	let selected = $state<Profile | null>(null);
+	let selected = $state<Profile | null>(session.profile);
 	let pin = $state('');
+	let name = $state('');
+	let confirmation = $state('');
+	let creating = $state(false);
 	let error = $state('');
+	let busy = $state(false);
+	let loading = $state(true);
 	let serverVisible = $state(false);
 	let serverInput = $state(session.baseURL);
-	let loading = $state(true);
-
-	async function loadProfiles() {
+	async function load() {
 		loading = true;
-		error = '';
 		try {
 			profiles = await session.api.listProfiles();
+			error = '';
 		} catch (e) {
-			error = `Serveur injoignable : ${e instanceof Error ? e.message : e}`;
+			error = messageOf(e);
 		} finally {
 			loading = false;
 		}
 	}
-
 	$effect(() => {
-		void loadProfiles();
+		void load();
 	});
-
 	async function login(event: SubmitEvent) {
 		event.preventDefault();
-		if (!selected) return;
+		busy = true;
 		error = '';
 		try {
-			await session.login(selected.id, pin);
-			goto('/');
+			if (creating) {
+				if (pin !== confirmation) throw new Error('Les codes ne correspondent pas.');
+				selected = await session.api.createProfile(name, pin);
+			}
+			if (selected) {
+				await session.login(selected.id, pin);
+				await goto('/');
+			}
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = messageOf(e);
 			pin = '';
+		} finally {
+			busy = false;
 		}
 	}
-
-	function applyServer() {
-		session.setBaseURL(serverInput);
-		serverVisible = false;
-		void loadProfiles();
+	async function applyServer() {
+		try {
+			session.setBaseURL(serverInput);
+			selected = null;
+			serverVisible = false;
+			await load();
+		} catch (e) {
+			error = messageOf(e);
+		}
+	}
+	async function demo() {
+		busy = true;
+		error = '';
+		try {
+			const res = await session.api.request<{ profile: Profile; pin: string }>(
+				'POST',
+				'/v1/profiles/demo'
+			);
+			await session.login(res.profile.id, res.pin);
+			await goto('/');
+		} catch (e) {
+			error = messageOf(e);
+		} finally {
+			busy = false;
+		}
 	}
 </script>
 
-<div class="flex min-h-screen items-center justify-center p-6">
-	<div class="glass w-full max-w-md p-8">
-		<h1 class="iridescent text-4xl font-extrabold tracking-tight">Opale</h1>
-		<p class="mt-1 text-sm text-neutral-500">Ton cockpit patrimonial — privé, chez toi.</p>
-
-		{#if loading}
-			<p class="mt-8 animate-pulse text-sm text-neutral-500">Connexion au serveur…</p>
-		{:else if !selected}
-			<h2 class="mt-8 text-sm font-semibold text-neutral-500 uppercase">Qui es-tu ?</h2>
-			<div class="mt-3 grid gap-2">
-				{#each profiles as profile (profile.id)}
-					<button
-						onclick={() => (selected = profile)}
-						class="glass hover:border-accent/50 flex items-center gap-3 px-4 py-3 text-left font-medium transition"
+<svelte:head><title>Connexion · Opale</title></svelte:head>
+<div class="gate">
+	<div class="glass panel gate-card">
+		<h1 class="iridescent text-4xl font-extrabold">Opale</h1>
+		<p class="muted">Ton patrimoine, tes projets. En toute confidentialité.</p>
+		{#if session.reason}<p class="notice" role="status">{session.reason}</p>{/if}
+		{#if error}<p class="notice error" role="alert">{error}</p>{/if}
+		{#if selected || creating}<form onsubmit={login} class="opale-form">
+				<h2>{creating ? 'Créer un profil' : `Déverrouiller ${selected?.name}`}</h2>
+				{#if creating}<label
+						>Prénom ou nom du profil<input
+							bind:value={name}
+							required
+							maxlength="80"
+							autocomplete="nickname"
+						/></label
+					>{/if}<label
+					>Code personnel<input
+						type="password"
+						bind:value={pin}
+						required
+						minlength="4"
+						maxlength="72"
+						autocomplete={creating ? 'new-password' : 'current-password'}
+					/></label
+				>{#if creating}<label
+						>Confirmer le code<input
+							type="password"
+							bind:value={confirmation}
+							required
+							minlength="4"
+							autocomplete="new-password"
+						/></label
 					>
-						<span
-							class="bg-accent/15 text-accent flex h-9 w-9 items-center justify-center rounded-full font-bold"
-						>
-							{profile.name.slice(0, 1).toUpperCase()}
-						</span>
-						{profile.name}
-					</button>
-				{/each}
-				{#if profiles.length === 0 && !error}
-					<p class="text-sm text-neutral-500">
-						Aucun profil — crée le premier depuis l'app iOS.
-					</p>
-				{/if}
-			</div>
-		{:else}
-			<form onsubmit={login} class="mt-8">
-				<h2 class="text-sm font-semibold text-neutral-500 uppercase">
-					Code de {selected.name}
-				</h2>
-				<!-- svelte-ignore a11y_autofocus -->
-				<input
-					type="password"
-					inputmode="numeric"
-					autocomplete="current-password"
-					placeholder="Code PIN"
-					bind:value={pin}
-					autofocus
-					class="focus:border-accent mt-3 w-full rounded-2xl border border-black/10 bg-white/70 px-4 py-3 text-lg tracking-[0.4em] outline-none dark:border-white/10 dark:bg-white/10"
-				/>
-				<div class="mt-4 flex gap-2">
-					<button
+					<p class="muted">
+						Le cloud est désactivé par défaut. Choisis un code difficile à deviner.
+					</p>{:else}<p class="muted">
+						Le code est demandé à chaque ouverture, après 5 minutes d’inactivité et au retour dans
+						l’onglet. Le déverrouillage nécessite le serveur.
+					</p>{/if}
+				<div class="actions">
+					<button class="primary" disabled={busy}
+						>{busy ? 'Connexion…' : creating ? 'Créer mon profil' : 'Déverrouiller'}</button
+					><button
 						type="button"
-						onclick={() => ((selected = null), (pin = ''))}
-						class="rounded-2xl px-4 py-3 text-sm text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10"
+						onclick={() => {
+							selected = null;
+							creating = false;
+							pin = '';
+						}}
+						disabled={busy}>Changer de profil</button
 					>
-						Retour
-					</button>
-					<button
-						type="submit"
-						disabled={pin.length < 4}
-						class="bg-accent flex-1 rounded-2xl px-4 py-3 font-semibold text-white shadow-lg transition hover:brightness-105 disabled:opacity-40"
-					>
-						Déverrouiller
-					</button>
 				</div>
 			</form>
-		{/if}
-
-		{#if error}
-			<p class="text-loss mt-4 text-sm">{error}</p>
-		{/if}
-
-		<div class="mt-8 border-t border-black/5 pt-4 dark:border-white/10">
-			{#if serverVisible}
-				<div class="flex gap-2">
-					<input
-						bind:value={serverInput}
-						placeholder="https://opale.mondomaine.fr (vide = même origine)"
-						class="flex-1 rounded-xl border border-black/10 bg-white/70 px-3 py-2 text-sm outline-none dark:border-white/10 dark:bg-white/10"
-					/>
-					<button
-						onclick={applyServer}
-						class="bg-accent/15 text-accent rounded-xl px-3 py-2 text-sm font-medium">OK</button
-					>
-				</div>
-			{:else}
-				<button
-					onclick={() => (serverVisible = true)}
-					class="text-xs text-neutral-400 hover:text-neutral-600"
-				>
-					Serveur : {session.baseURL || 'même origine'} — modifier
-				</button>
-			{/if}
-		</div>
+		{:else}{#if loading}<p role="status">Connexion au serveur…</p>{/if}
+			<div class="profile-list">
+				{#each profiles as profile (profile.id)}<button onclick={() => (selected = profile)}
+						><span class="avatar">{profile.name.slice(0, 1).toUpperCase()}</span
+						>{profile.name}</button
+					>{/each}
+			</div>
+			{#if !loading && !profiles.length}<p class="empty">
+					Bienvenue ! Crée ton premier profil pour commencer.
+				</p>{/if}
+			<div class="actions">
+				<button class="primary" onclick={() => (creating = true)}>Créer un profil</button><button
+					onclick={demo}
+					disabled={busy}>Découvrir avec une démo</button
+				><button onclick={load} disabled={loading}>Réessayer</button>
+			</div>{/if}
+		<details class="server-settings" bind:open={serverVisible}>
+			<summary>Serveur : {session.baseURL || 'même origine'}</summary><label
+				>Adresse du serveur<input
+					type="url"
+					bind:value={serverInput}
+					placeholder="https://opale.exemple.fr"
+				/></label
+			><button onclick={applyServer}>Utiliser ce serveur</button>
+			<p class="muted">Laisse vide pour utiliser l’adresse de cette application.</p>
+		</details>
 	</div>
 </div>

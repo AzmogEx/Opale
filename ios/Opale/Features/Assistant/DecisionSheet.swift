@@ -7,6 +7,7 @@ struct DecisionSheet: View {
     @Environment(SessionStore.self) private var session
     @Environment(\.dismiss) private var dismiss
 
+    @State private var allowCloud = false
     @State private var label = ""
     @State private var oneTimeText = ""
     @State private var monthlyText = ""
@@ -24,6 +25,7 @@ struct DecisionSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section { NavigationLink("Acheter / louer · cash / crédit · rembourser / investir") { DecisionComparisonView() } }
                 Section {
                     TextField("Quoi ? (ex. Acheter une voiture)", text: $label)
                     TextField("Coût immédiat (€)", text: $oneTimeText)
@@ -36,6 +38,12 @@ struct DecisionSheet: View {
                     Text("Laisse un champ vide s'il ne s'applique pas. Le moteur projette ta trajectoire avec et sans cette décision.")
                 }
 
+                if case .loggedIn(let profile) = session.state, profile.privacyDefault == "N2" {
+                    Section("Autorisation pour cette évaluation") {
+                        Toggle("Autoriser le cloud pour cette demande", isOn: $allowCloud)
+                        Text("Agrégats arrondis et minimisés uniquement si le serveur le permet, sans texte personnel ni document. Les résultats financiers restent déterministes.").font(.caption)
+                    }
+                }
                 if isLoading {
                     Section {
                         HStack {
@@ -162,6 +170,7 @@ struct DecisionSheet: View {
     private func narrativeSection(_ result: DecisionResponse) -> some View {
         Section {
             Text(result.narrative)
+                .sensitive()
                 .font(.subheadline)
         } header: {
             Text("Explication")
@@ -174,7 +183,7 @@ struct DecisionSheet: View {
     private func tierFooter(_ tier: String) -> String {
         switch tier {
         case "n2": "Analyse rédigée sur ton homelab — les données ne l'ont jamais quitté."
-        case "n3": "Analyse rédigée par le modèle cloud à partir de données anonymisées."
+        case "n3": "Analyse rédigée par le modèle cloud à partir de données minimisées."
         default: "Verdict du moteur déterministe — l'IA est hors ligne."
         }
     }
@@ -186,6 +195,8 @@ struct DecisionSheet: View {
             errorMessage = "Montants invalides"
             return
         }
+        let consent = allowCloud
+        allowCloud = false
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
@@ -194,7 +205,7 @@ struct DecisionSheet: View {
                 label: label.trimmingCharacters(in: .whitespaces),
                 oneTimeCostCents: oneTime.raw,
                 monthlyCostCents: monthly.raw,
-                allowCloud: false
+                allowCloud: consent
             ))
         } catch {
             errorMessage = error.localizedDescription
