@@ -29,7 +29,9 @@ Pour mettre à jour une ressource existante : recharger le Compose depuis `main`
 
 ## Vérifier
 
-Le DNS doit viser le serveur Coolify ; ses ports 80 et 443 doivent être accessibles pour HTTPS. Après déploiement, les services `db` et `web` doivent être sains, l'API doit rester démarrée et les journaux ne doivent montrer aucune erreur de migration.
+Le DNS doit viser le serveur Coolify ; ses ports 80 et 443 doivent être accessibles pour HTTPS. Après déploiement, les trois services `db`, `api` et `web` doivent être sains et les journaux ne doivent montrer aucune erreur de migration.
+
+Les healthchecks sont définis dans le Compose : PostgreSQL utilise `pg_isready`, l'API interroge son `/readyz` avec un binaire Go embarqué compatible avec l'image distroless, et le web interroge `/readyz` via nginx. L'API attend PostgreSQL sain ; le web attend l'API saine. La sonde API s'exécute toutes les 10 secondes, avec 4 secondes de délai HTTP, 5 secondes de limite Docker, 3 échecs consécutifs et 60 secondes de tolérance initiale pour les migrations. Recharger le Compose depuis Git et reconstruire/redéployer pour obtenir le nouveau binaire et ses sondes. Aucun champ Healthcheck supplémentaire n'est nécessaire dans l'interface Coolify pour cette pile Compose.
 
 ```sh
 curl --fail https://opale.vaycode.com/healthz
