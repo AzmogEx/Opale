@@ -17,10 +17,10 @@ settings:
     CURRENT_PROJECT_VERSION: 1
     MARKETING_VERSION: 0.1.0
     APS_ENVIRONMENT: development
-    # Signature pour l'installation sur appareil réel (équipe Cleanows —
-    # compte payant : profils longue durée, App Groups pour le widget).
+    # Aucune équipe imposée. Le simulateur utilise une signature locale.
+    # Renseigner sa propre équipe dans Xcode pour installer sur un iPhone.
     CODE_SIGN_STYLE: Automatic
-    DEVELOPMENT_TEAM: X3G9BWSS83
+    DEVELOPMENT_TEAM: ""
   configs:
     Release:
       APS_ENVIRONMENT: production

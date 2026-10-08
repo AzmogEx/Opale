@@ -69,6 +69,9 @@ test('real API: transfer, goals, vault, fiscal source and module rendering', asy
 		await page.getByRole('button', { name: 'Modifier', exact: true }).click();
 		await page.getByLabel('Montant cible').fill('6000');
 		await page.getByRole('button', { name: 'Enregistrer', exact: true }).click();
+		// Le formulaire se ferme après la réponse PATCH ; attendre sa persistance
+		// avant la lecture indépendante de l'API (plus lente derrière nginx en CI).
+		await expect(page.getByLabel('Montant cible')).toHaveCount(0);
 		const goals = await (await request.get('/v1/goals/', { headers })).json();
 		expect(goals.goals[0].target_cents).toBe(600000);
 		await page.getByRole('button', { name: 'Fiscalité et PER', exact: true }).click();

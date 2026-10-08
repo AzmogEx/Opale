@@ -1,6 +1,8 @@
 # Livraison iOS — 8 octobre 2026
 
-Ce suivi couvre le client iOS. La matrice interplateforme et les migrations sont tenues dans la documentation de livraison du dépôt. Les modifications locales préexistantes de `APIClient.swift` et `APIPilote.swift` ont été conservées ; aucun commit n’a été créé.
+Ce suivi couvre le client iOS. La matrice interplateforme et les migrations sont tenues dans la documentation de livraison du dépôt. Les modifications locales préexistantes de `APIClient.swift` et `APIPilote.swift` ont été conservées dans la livraison publiée sur GitHub.
+
+Le projet n'impose aucune équipe de signature. Le simulateur utilise une signature ad hoc locale ; une installation sur iPhone physique demandera de sélectionner sa propre équipe et de configurer les capacités App Group/Push correspondantes. La compilation arm64 pour appareil a réussi sans signature le 8 octobre 2026, ce qui ne constitue pas une installation sur téléphone. L'installation physique de cette livraison est différée par choix de l'utilisateur.
 
 ## État et parcours
 

@@ -15,6 +15,8 @@ curl --fail http://127.0.0.1:3000/readyz
 
 Ouvrir [Opale local](http://127.0.0.1:3000), créer un profil et choisir son code personnel. Les ports sont limités à la boucle locale. Pour un accès externe, mettre le web derrière un reverse proxy HTTPS ; voir [exploitation](docs/EXPLOITATION.md).
 
+Pour Coolify : [guide de déploiement](docs/COOLIFY.md). Utiliser uniquement `docker-compose.yml` et associer le domaine au service `web`, port interne `80`. Les ports du poste sont définis séparément dans `docker-compose.override.yml`, chargé automatiquement par les commandes locales sans `-f`.
+
 En développement natif : Go 1.26+, PostgreSQL17, Node22. `make db` démarre PostgreSQL ; charger les variables de `.env` dans l’environnement du terminal avant `make run`. Dans `web/`, `npm ci` puis `npm run dev`. Vite proxifie vers `http://localhost:8080` ; `OPALE_API_URL` permet de cibler une API de test. Pour iOS, générer le projet avec `xcodegen generate --spec ios/project.yml`, puis ouvrir `ios/Opale.xcodeproj` dans Xcode26.
 
 ## Fonctionnalités
@@ -50,7 +52,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-`npm run test:e2e:integration` nécessite une **API et une base jetables** derrière le proxy Vite (coffre configuré) ; ces tests créent puis suppriment leurs profils. Ne jamais utiliser une instance personnelle. Le workflow CI configure Go/race avec PostgreSQL, Svelte/check/build, tests navigateur et pile Compose, sauvegarde/restauration isolée, tests unitaires iOS sur simulateur signé localement. Son exécution distante n’a pas été réalisée pendant cette livraison ; les vérifications locales et leurs limites figurent dans la recette.
+`npm run test:e2e:integration` nécessite une **API et une base jetables** derrière le proxy Vite ou nginx (coffre configuré) ; ces tests créent puis suppriment leurs profils. Ne jamais utiliser une instance personnelle. Le workflow CI configure Go/race avec PostgreSQL, Svelte/check/build, tests navigateur et pile Compose, sauvegarde/restauration isolée, tests unitaires iOS sur simulateur signé localement. Les résultats distants sont disponibles dans [GitHub Actions](https://github.com/AzmogEx/Opale/actions) ; les vérifications locales et leurs limites figurent dans la recette.
 
 ## Documents et organisation
 

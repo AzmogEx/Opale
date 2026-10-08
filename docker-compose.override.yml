@@ -1,0 +1,12 @@
+# Accès depuis le poste local. Chargé automatiquement par docker compose.
+# Coolify utilise uniquement docker-compose.yml, sans ce fichier.
+services:
+  db:
+    ports:
+      - "127.0.0.1:${OPALE_DB_PORT:-5432}:5432"
+  api:
+    ports:
+      - "127.0.0.1:${OPALE_API_PORT:-8080}:8080"
+  web:
+    ports:
+      - "127.0.0.1:${OPALE_WEB_PORT:-3000}:80"

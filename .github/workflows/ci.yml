@@ -111,6 +111,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - name: Build and start isolated Compose stack
         run: |
+          docker compose -f docker-compose.yml config --format json | python3 -c 'import json,sys; services=json.load(sys.stdin)["services"]; assert all(not s.get("ports") for s in services.values()), "La pile Coolify ne doit publier aucun port hôte"; assert "80" in services["web"]["expose"]'
           docker compose config --quiet
           docker compose up -d --build --wait --wait-timeout 180
           curl --fail http://127.0.0.1:3000/readyz
@@ -120,6 +121,12 @@ jobs:
           npm ci
           npx playwright install --with-deps chromium
           npm run test:e2e:integration
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: integration-failure-traces
+          path: web/test-results
+          retention-days: 7
       - name: Verify backup and isolated restore
         run: |
           ./scripts/backup.sh /tmp/opale-backups
