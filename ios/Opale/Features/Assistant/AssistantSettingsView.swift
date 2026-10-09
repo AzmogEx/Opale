@@ -5,6 +5,7 @@ enum AssistantMode: Int, CaseIterable, Identifiable {
     var id: Int { rawValue }
     var apiValue: String { switch self { case .automatic: "auto"; case .homelab: "homelab"; case .cloud: "cloud" } }
     var title: String { switch self { case .automatic: "Automatique · privé d’abord"; case .homelab: "Mon PC · Ollama"; case .cloud: "Cloud · Claude" } }
+    var choiceTitle: String { switch self { case .automatic: "Automatique"; case .homelab: "Mon PC"; case .cloud: "Cloud" } }
     var detail: String { switch self {
     case .automatic: "Essaie ton PC, puis le moteur Opale. Le cloud reste une proposition qui demande ton accord."
     case .homelab: "Utilise uniquement le modèle configuré sur ton PC. S’il est hors ligne, le moteur Opale prend le relais."
@@ -24,7 +25,7 @@ struct AssistantSettingsView: View {
     var body: some View {
         Form {
             Section("Quel moteur pour mes questions ?") {
-                Picker("Mon choix", selection: $mode) { ForEach(AssistantMode.allCases) { Text($0.title).tag($0) } }.accessibilityIdentifier("assistant.mode")
+                Picker("Mon choix", selection: $mode) { ForEach(AssistantMode.allCases) { Text($0.choiceTitle).tag($0) } }.accessibilityIdentifier("assistant.mode")
                 Text(mode.detail).font(.subheadline).foregroundStyle(.secondary)
                 Text("Ce choix est propre à ce profil. Choisir un fournisseur ne l’installe pas et n’autorise aucun envoi à lui seul.").font(.caption).foregroundStyle(.secondary)
             }
