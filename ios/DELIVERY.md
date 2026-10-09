@@ -1,8 +1,20 @@
-# Livraison iOS — 8 octobre 2026
+# Livraison iOS — 9 octobre 2026
 
 Ce suivi couvre le client iOS. La matrice interplateforme et les migrations sont tenues dans la documentation de livraison du dépôt. Les modifications locales préexistantes de `APIClient.swift` et `APIPilote.swift` ont été conservées dans la livraison publiée sur GitHub.
 
-Le projet n'impose aucune équipe de signature. Le simulateur utilise une signature ad hoc locale ; une installation sur iPhone physique demandera de sélectionner sa propre équipe et de configurer les capacités App Group/Push correspondantes. La compilation arm64 pour appareil a réussi sans signature le 8 octobre 2026, ce qui ne constitue pas une installation sur téléphone. L'installation physique de cette livraison est différée par choix de l'utilisateur.
+Le projet n'impose aucune équipe de signature. Le simulateur utilise une signature ad hoc locale. Le 9 octobre, à la demande de l’utilisateur, l’application a été signée avec son équipe Cleanows et installée sur son iPhone 17 Pro, puis mise à jour avec le formulaire initial. Le choix de l’équipe reste un paramètre de compilation local. L’installation ne prouve pas la réception APNs ou le bon fonctionnement de tous les fournisseurs externes.
+
+## Formulaire initial — 9 octobre
+
+Les profils personnels vides ouvrent automatiquement un formulaire après authentification : revenu net, compte en EUR avec solde facultatif, charges fixes, abonnements, dépenses variables et objectif, puis récapitulatif. Chaque étape reste modifiable. Le brouillon local protégé est isolé par serveur/profil, et les étapes validées sont sauvegardées sur le serveur. « Plus tard » permet de reprendre depuis Réglages → Ma situation de départ ; une panne réseau offre une fermeture conservant le brouillon local.
+
+La confirmation crée les échéances et l’objectif atomiquement, une seule fois, sans comptabiliser de paiements imaginaires. La consultation d’une configuration terminée renvoie vers les comptes, le calendrier et les objectifs actuels. Les abonnements déclarés apparaissent séparément des détections dans les transactions, avec la devise de leur compte actuel. Un compte courant à découvert peut être créé puis revalorisé. Les profils déjà remplis ne sont pas interrompus ; les démos sont exclues.
+
+Le budget variable est une estimation de ce formulaire, pas une nouvelle opération ni une enveloppe automatiquement créée. L’interface reste compatible avec un ancien backend et explique la nécessité du redéploiement depuis les Réglages. Les migrations `0022` et `0023` s’appliquent au démarrage du backend.
+
+Validation : 21 tests unitaires iOS passent, dont 7 pour la mensualisation exacte, les valeurs incomplètes, les dates, la validation par étape et l’isolation du cache. La suite backend avec PostgreSQL réel et `-race` passe ; les tests ciblés couvrent aussi finalisation concurrente, rollback, export/reset, isolation et découvert. L’application et son widget compilent avec signature pour l’iPhone physique.
+
+Les deux recettes UI passent contre une API et une base synthétiques : reprise depuis Réglages puis après relance/réauthentification, et parcours complet avec un salaire, un solde, une charge, un abonnement et un objectif. Le contrôle API final retrouve exactement un compte, trois règles et aucune transaction réalisée. Le récapitulatif affiche bien 1 839,01 € pour 3 200 − 850 − 10,99 − 500. Après deux ajustements de l’automatisation (biométrie enrôlée du simulateur et cible tactile du toggle SwiftUI), la reprise passe à 12:14 et le parcours complet à 12:19 le 09/10/2026. Les captures de compte, reprise et récapitulatif ont été inspectées. Preuves locales temporaires : `/tmp/opale-onboarding-evidence`, `/tmp/opale-onboarding-final-tests.log` et `/tmp/opale-onboarding-completion-tests.log`.
 
 ## État et parcours
 

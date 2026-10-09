@@ -16,6 +16,7 @@ struct SettingsView: View {
 	@State private var showAccessLog = false
 	@State private var showFXRates = false
 	@State private var showBank = false
+	@State private var showFinancialSetup = false
 	@State private var exportedFileURL: URL?
 	@State private var isExporting = false
 
@@ -68,6 +69,7 @@ struct SettingsView: View {
 			.sheet(isPresented: $showAccessLog) { AccessLogSheet() }
 			.sheet(isPresented: $showFXRates) { FXRatesSheet {} }
 			.sheet(isPresented: $showBank) { BankSheet {} }
+			.fullScreenCover(isPresented: $showFinancialSetup) { FinancialSetupView().id(session.profileKey) }
 			.sheet(item: $exportedFileURL) { url in
 				ExportShareSheet(fileURL: url)
 					.presentationDetents([.medium])
@@ -95,6 +97,7 @@ struct SettingsView: View {
 	private var profileSection: some View {
 		Section("Profil") {
 			LabeledContent("Connecté en tant que", value: session.profileName)
+                Button { showFinancialSetup = true } label: { Label("Ma situation de départ", systemImage: "list.clipboard") }
                 NavigationLink("Modifier le profil / confidentialité") { ProfileSettingsView() }
 		}
 	}

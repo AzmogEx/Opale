@@ -190,10 +190,8 @@ func (s *Server) parseValuation(w http.ResponseWriter, r *http.Request) (valuati
 		writeError(w, http.StatusBadRequest, "invalid_body", "corps JSON invalide")
 		return req, time.Time{}, false
 	}
-	if req.ValueCents < 0 {
-		writeError(w, http.StatusBadRequest, "invalid_value", "la valeur doit être positive (centimes)")
-		return req, time.Time{}, false
-	}
+	// The store enforces positivity for debts and other asset kinds. A checking
+	// account may have a negative closing balance (overdraft), including edits.
 	asOf := parisToday()
 	if req.AsOf != "" {
 		t, err := time.Parse("2006-01-02", req.AsOf)

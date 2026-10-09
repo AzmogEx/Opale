@@ -12,7 +12,7 @@ struct RootView: View {
             case .loggedOut:
                 ProfileGateView()
             case .loggedIn:
-                MainTabView()
+                FinancialSetupGate()
                     .id(session.profileKey)
                     .safeAreaInset(edge: .top) {
                         if session.isOffline {

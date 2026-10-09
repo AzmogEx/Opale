@@ -29,6 +29,8 @@ En développement natif : Go 1.26+, PostgreSQL17, Node22. `make db` démarre Pos
 | Projection | FIRE, inflation, objectifs, scénarios comparés, arbitrages achat/location et crédit/investissement, crédits, fiscalité/PER documentés |
 | Assistant | Conversation, états de calcul et sources, bilan mensuel, jumeau patrimonial, cloud avec consentement explicite lorsque autorisé |
 
+Sur iPhone, les nouveaux profils disposent d’un formulaire en six étapes : revenu net, compte principal et solde facultatif, charges fixes, abonnements, budget variable et objectif, puis récapitulatif. Le brouillon se reprend dans **Réglages → Ma situation de départ**. La validation crée les échéances prévisionnelles et l’objectif sans inventer de transactions réalisées. Les profils déjà renseignés peuvent ouvrir ce parcours depuis les Réglages ; la démonstration en est exclue. Le budget variable sert uniquement à l’estimation initiale. Cette fonction nécessite les migrations backend `0022` et `0023`, appliquées automatiquement au démarrage de l’API après redéploiement.
+
 Les intégrations banque, IA externe, cotations et APNs nécessitent configuration et recette avec leur fournisseur. Le code et ses tests ne prouvent pas la réception d’une notification sur appareil réel ou la synchronisation d’un compte bancaire réel. Les limites sont détaillées dans les documents de livraison.
 
 ## Données et confidentialité

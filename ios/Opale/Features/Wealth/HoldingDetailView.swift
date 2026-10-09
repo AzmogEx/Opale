@@ -4,6 +4,7 @@ import SwiftUI
 struct HoldingDetailView: View {
     let id: String, kind: String, currency: String
     let liability: Bool
+    var allowsOverdraft = false
     var onChanged: () -> Void
     @Environment(SessionStore.self) private var session
     @State var name: String
@@ -44,14 +45,14 @@ struct HoldingDetailView: View {
         }.navigationTitle(name).navigationBarTitleDisplayMode(.inline)
         .task { await load() }
         .sheet(isPresented: $showAdd) {
-            ValuationEditSheet(currency: currency) { value, date in
+            ValuationEditSheet(currency: currency, allowsOverdraft: allowsOverdraft) { value, date in
                 if liability { _ = try await session.api.addLiabilityValuation(liabilityID: id, valueCents: value, asOf: date) }
                 else { _ = try await session.api.addAssetValuation(assetID: id, valueCents: value, asOf: date) }
                 changed()
             }
         }
         .sheet(item: $editing) { valuation in
-            ValuationEditSheet(currency: currency, existing: valuation) { value, date in
+            ValuationEditSheet(currency: currency, allowsOverdraft: allowsOverdraft, existing: valuation) { value, date in
                 try await session.api.updateValuation(id: valuation.id, amount: value, date: date)
                 changed()
             }
@@ -67,6 +68,7 @@ struct HoldingDetailView: View {
 
 private struct ValuationEditSheet: View {
     let currency: String
+    var allowsOverdraft = false
     var existing: Valuation?
     var save: (Int64, String) async throws -> Void
     @Environment(\.dismiss) private var dismiss
@@ -76,7 +78,11 @@ private struct ValuationEditSheet: View {
     @State private var error: String?
     var body: some View {
         NavigationStack { Form {
-            Section("Valeur en \(currency)") { TextField("Montant", text: $amount).keyboardType(.decimalPad); DatePicker("Date de référence", selection: $date, in: ...Date.now, displayedComponents: .date) }
+            Section("Valeur en \(currency)") {
+                TextField("Montant", text: $amount).keyboardType(allowsOverdraft ? .numbersAndPunctuation : .decimalPad)
+                DatePicker("Date de référence", selection: $date, in: ...Date.now, displayedComponents: .date)
+                if allowsOverdraft { Text("En cas de découvert, saisis un solde négatif avec le signe −.").font(.caption).foregroundStyle(.secondary) }
+            }
             Text("Le solde constaté inclut les opérations de cette date. Les mouvements ultérieurs sont ajoutés par le serveur.").font(.caption)
             ToolError(message: error)
         }.navigationTitle(existing == nil ? "Nouvelle valorisation" : "Corriger la valorisation").toolbar {

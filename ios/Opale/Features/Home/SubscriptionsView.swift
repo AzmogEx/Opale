@@ -10,6 +10,8 @@ struct SubscriptionsView: View {
 	@Environment(SessionStore.self) private var session
 
 	@State private var subscriptions: [SubscriptionStatus] = []
+	@State private var declaredSubscriptions: [CalendarRule] = []
+	@State private var declaredCurrencies: [String: String] = [:]
 	@State private var totalMonthly: Cents = .zero
 	@State private var totalYearly: Cents = .zero
 	@State private var loaded = false
@@ -22,13 +24,19 @@ struct SubscriptionsView: View {
 			ScrollView {
 				GlassEffectContainer(spacing: 16) {
 					VStack(spacing: 16) {
-						if loaded && subscriptions.isEmpty {
+						if loaded && subscriptions.isEmpty && declaredSubscriptions.isEmpty && errorMessage == nil {
 							EmptyStateView(
 								icon: "repeat.circle",
 								title: "Aucun abonnement détecté",
 								message: "Le moteur repère les prélèvements réguliers dès qu'il voit 3 occurrences (importe quelques mois de relevés)."
 							)
-						} else if !subscriptions.isEmpty {
+						}
+						if !declaredSubscriptions.isEmpty {
+                            declaredSection
+                        }
+						if !subscriptions.isEmpty {
+                            Text("Détectés dans les opérations")
+                                .font(.headline).frame(maxWidth: .infinity, alignment: .leading)
 							heroCard
 								.cascadeIn(0)
 							ForEach(Array(subscriptions.enumerated()), id: \.element.id) { index, sub in
@@ -36,10 +44,11 @@ struct SubscriptionsView: View {
 									.cascadeIn(index + 1)
 							}
 							insightFooter
-						} else if let errorMessage {
+						}
+                        if let errorMessage {
 							EmptyStateView(icon: "bolt.horizontal.circle",
 							               title: "Impossible de charger", message: errorMessage)
-						} else {
+						} else if !loaded {
 							ProgressView().frame(minHeight: 200)
 						}
 					}
@@ -51,9 +60,45 @@ struct SubscriptionsView: View {
 		}
 		.navigationTitle("Abonnements")
 		.navigationBarTitleDisplayMode(.inline)
-		.task { await load() }
+		.task(id: session.refreshID) { await load() }
 		.refreshable { await load() }
 	}
+
+    private var declaredSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Abonnements déclarés").font(.headline)
+            Text("Saisis pendant la configuration. Les montants et dates ci-dessous suivent les séries actuelles du calendrier.")
+                .font(.caption).foregroundStyle(.secondary)
+            ForEach(declaredSubscriptions) { rule in
+                GlassCard {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(rule.label).font(.body.weight(.medium))
+                            Spacer()
+                            if let currency = declaredCurrencies[rule.asset_id] {
+                                AmountText(cents: rule.amount_cents, style: .full, currency: currency)
+                                    .font(.callout.weight(.semibold))
+                            } else {
+                                Text("Devise indisponible").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        Text("\(periodicityLabel(rule.frequency)) · depuis le \(Date.fromOpaleDay(rule.date)?.opaleFormatted(.dateTime.day().month(.wide).year()) ?? rule.date)")
+                            .font(.caption).foregroundStyle(.secondary)
+                        if !rule.active {
+                            Label("Série arrêtée", systemImage: "pause.circle")
+                                .font(.caption).foregroundStyle(.secondary)
+                        } else if let end = rule.end_date {
+                            Text("Fin le \(Date.fromOpaleDay(end)?.opaleFormatted(.dateTime.day().month(.wide).year()) ?? end)")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            NavigationLink { CalendarView() } label: {
+                Label("Modifier dans le calendrier", systemImage: "calendar")
+            }.font(.subheadline)
+        }
+    }
 
 	// MARK: - Héro : le vrai coût
 
@@ -158,6 +203,7 @@ struct SubscriptionsView: View {
 
 	private func periodicityLabel(_ p: String) -> String {
 		switch p {
+		case "once": "Une fois"
 		case "weekly": "Hebdomadaire"
 		case "monthly": "Mensuel"
 		case "quarterly": "Trimestriel"
@@ -167,15 +213,43 @@ struct SubscriptionsView: View {
 	}
 
 	private func load() async {
+		let api = session.api
+		let profileKey = session.profileKey
+		var failures: [String] = []
 		do {
-			let result = try await session.api.subscriptions()
+			let result = try await api.subscriptions()
+			guard !Task.isCancelled, session.profileKey == profileKey else { return }
 			subscriptions = result.items
 			totalMonthly = result.monthly
 			totalYearly = result.yearly
-			errorMessage = nil
 		} catch {
-			errorMessage = error.localizedDescription
+			guard !Task.isCancelled, session.profileKey == profileKey else { return }
+			failures.append(error.localizedDescription)
 		}
+        do {
+            let setup = try await api.fetchFinancialSetup()
+            guard !Task.isCancelled, session.profileKey == profileKey else { return }
+            let ids = Set(setup.result?.subscriptionRuleIDs ?? [])
+            if ids.isEmpty {
+                declaredSubscriptions = []
+                declaredCurrencies = [:]
+            } else {
+                async let assetsRequest = api.listAssets()
+                let calendar: CalendarData = try await api.request("GET", "/v1/calendar")
+                let assets = try await assetsRequest
+                guard !Task.isCancelled, session.profileKey == profileKey else { return }
+                declaredSubscriptions = calendar.rules.filter { ids.contains($0.id) }
+                declaredCurrencies = Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0.currency) })
+            }
+        } catch APIError.badStatus(404, _) {
+            // Les serveurs antérieurs au parcours initial restent utilisables.
+            declaredSubscriptions = []
+            declaredCurrencies = [:]
+        } catch {
+            guard !Task.isCancelled, session.profileKey == profileKey else { return }
+            failures.append("Abonnements déclarés : \(error.localizedDescription)")
+        }
+		errorMessage = failures.isEmpty ? nil : failures.joined(separator: "\n")
 		loaded = true
 	}
 }

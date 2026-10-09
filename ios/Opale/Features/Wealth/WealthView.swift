@@ -301,7 +301,7 @@ enum WealthCenter: String, CaseIterable, Identifiable, Hashable {
 struct AssetDetailView: View {
     let asset: Asset
     var onChanged: () -> Void
-    var body: some View { HoldingDetailView(id: asset.id, kind: asset.kind.label, currency: asset.currency, liability: false, onChanged: onChanged, name: asset.name, note: asset.note, archived: asset.archived) }
+    var body: some View { HoldingDetailView(id: asset.id, kind: asset.kind.label, currency: asset.currency, liability: false, allowsOverdraft: asset.kind == .checking, onChanged: onChanged, name: asset.name, note: asset.note, archived: asset.archived) }
 }
 struct LiabilityDetailView: View {
     let liability: Liability

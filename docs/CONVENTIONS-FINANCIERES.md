@@ -16,6 +16,8 @@ Les devises héritées à une échelle potentiellement ambiguë bloquent la migr
 
 Une valorisation représente une **clôture de journée civile**, comprenant les mouvements de cette date. Pour un compte courant ou un livret : dernier solde valorisé + mouvements comptabilisés strictement postérieurs à la valorisation, jusqu’à aujourd’hui inclus. Une transaction le jour de la valorisation n’est pas ajoutée deux fois. Les dates futures et les opérations provisoires sont exclues du solde courant. Sans solde initial, les mouvements partent de zéro, avec total signalé incomplet.
 
+Un compte courant peut avoir un solde de clôture négatif pour représenter un découvert réel. Les autres actifs et les dettes gardent des valorisations positives ou nulles. Le formulaire initial enregistre les revenus et prélèvements déclarés comme échéances prévisionnelles ; ils ne deviennent pas automatiquement des transactions réalisées.
+
 Pour les autres actifs, la valeur est la dernière valorisation connue à la date considérée. Un apport d’investissement ne devient pas automatiquement une performance de marché ; les flux du module investissement servent à analyser les valorisations observées.
 
 Le capital restant dû est la dernière valorisation de dette moins les remboursements de principal comptabilisés et explicitement liés, selon la même frontière de clôture. Une liaison exige le même propriétaire et la même devise que le compte débité. Un remboursement supérieur au capital enregistré est refusé sans débit partiel. La suppression/recréation corrige un remboursement lié ; ses champs comptables ne sont pas modifiables indépendamment.

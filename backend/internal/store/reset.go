@@ -17,10 +17,17 @@ func (s *Store) ResetProfileData(ctx context.Context, profileID string) error {
 		return fmt.Errorf("ResetProfileData: %w", err)
 	}
 	defer tx.Rollback(ctx)
+	// Serialize against finalization of the financial setup so a completed
+	// assistant cannot recreate data halfway through an explicit profile reset.
+	var lockedProfile string
+	if err := tx.QueryRow(ctx, `SELECT id FROM profiles WHERE id=$1 FOR UPDATE`, profileID).Scan(&lockedProfile); err != nil {
+		return domainNotFound(err)
+	}
 
 	// L'ordre suit les dépendances ; les détails (property/object/company)
 	// et les valorisations tombent en cascade avec les actifs/passifs.
 	statements := []string{
+		`DELETE FROM profile_onboarding WHERE profile_id=$1`,
 		`DELETE FROM bank_account_bindings WHERE profile_id=$1`,
 		`DELETE FROM profile_fx_history WHERE profile_id=$1`,
 		`DELETE FROM emergency_grants WHERE owner_profile_id=$1 OR recipient_profile_id=$1`,
