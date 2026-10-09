@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct CalendarRule: Codable, Identifiable {
+nonisolated struct CalendarRule: Codable, Identifiable, Sendable {
     var id: String
     var asset_id: String
     var label: String
@@ -13,7 +13,7 @@ struct CalendarRule: Codable, Identifiable {
     var managed_by: String?
     var managed_id: String?
 }
-struct CalendarOccurrence: Codable, Identifiable {
+nonisolated struct CalendarOccurrence: Codable, Identifiable, Sendable {
     var rule_id: String
     var asset_id: String
     var label: String
@@ -24,7 +24,7 @@ struct CalendarOccurrence: Codable, Identifiable {
     var transaction_id: String?
     var id: String { rule_id + date }
 }
-struct CalendarData: Decodable { var rules: [CalendarRule]; var occurrences: [CalendarOccurrence] }
+nonisolated struct CalendarData: Decodable, Sendable { var rules: [CalendarRule]; var occurrences: [CalendarOccurrence] }
 struct CalendarView: View {
     @Environment(SessionStore.self) private var session
     @State private var data: CalendarData?
@@ -78,6 +78,7 @@ struct CalendarView: View {
 struct CalendarRuleSheet: View {
     var existing: CalendarRule?
     var detected: RecurringFlow?
+    var guided = false
     var saved: () -> Void
     @Environment(SessionStore.self) private var session
     @Environment(\.dismiss) private var dismiss
@@ -98,7 +99,8 @@ struct CalendarRuleSheet: View {
             Section("Échéance") {
                 TextField("Libellé", text: $label)
                 Picker("Compte", selection: $account) { Text("Choisir").tag(""); ForEach(assets) { Text($0.name).tag($0.id) } }
-                TextField("Montant signé en \(currency) (négatif = sortie)", text: $amount).keyboardType(.numbersAndPunctuation)
+                TextField(guided ? "\((existing?.amount_cents.raw ?? 0) > 0 ? "Net versé" : "Montant de la charge") (\(currency))" : "Montant signé en \(currency) (négatif = sortie)", text: $amount).keyboardType(guided ? .decimalPad : .numbersAndPunctuation)
+                if guided { Text("Recopie un montant positif. Opale conserve le sens de cette échéance : revenu ou charge.").font(.caption).foregroundStyle(.secondary) }
                 DatePicker("Début", selection: $date, displayedComponents: .date)
                 Picker("Fréquence", selection: $frequency) { Text("Choisir").tag(""); Text("Une fois").tag("once"); Text("Semaine").tag("weekly"); Text("Mois").tag("monthly"); Text("Trimestre").tag("quarterly"); Text("Année").tag("yearly") }
                 Toggle("Date de fin", isOn: $hasEnd)
@@ -116,7 +118,7 @@ struct CalendarRuleSheet: View {
             ToolbarItem(placement: .confirmationAction) { Button("Enregistrer") { Task { await save() } }.disabled(busy || account.isEmpty || label.isEmpty || frequency.isEmpty) }
         }.task {
             do { assets = try await session.api.listAssets() } catch { self.error = error.localizedDescription }
-            if let rule = existing { account = rule.asset_id; label = rule.label; amount = MoneyFormat.input(rule.amount_cents, currency: assets.first { $0.id == account }?.currency ?? "EUR"); date = Date.fromOpaleDay(rule.date) ?? .now; frequency = rule.frequency; active = rule.active; hasEnd = rule.end_date != nil; end = rule.end_date.flatMap(Date.fromOpaleDay) ?? .now }
+            if let rule = existing { account = rule.asset_id; label = rule.label; amount = MoneyFormat.input(rule.amount_cents, currency: assets.first { $0.id == account }?.currency ?? "EUR"); if guided { amount = amount.replacingOccurrences(of: "-", with: "").replacingOccurrences(of: "−", with: "") }; date = Date.fromOpaleDay(rule.date) ?? .now; frequency = rule.frequency; active = rule.active; hasEnd = rule.end_date != nil; end = rule.end_date.flatMap(Date.fromOpaleDay) ?? .now }
             if let detected { label = detected.label; amount = "\(detected.amount.decimalEuros)"; date = detected.nextDate; frequency = ["weekly", "monthly", "quarterly", "yearly"].contains(detected.periodicity) ? detected.periodicity : "" }
         }
         .onChange(of: account) { old, new in
@@ -128,7 +130,11 @@ struct CalendarRuleSheet: View {
     }
     private func save() async {
         guard !frequency.isEmpty else { error = "Choisis explicitement une fréquence prise en charge"; return }
-        guard let value = Cents.parse(amount, currency: currency), value.raw != 0 else { error = "Montant non nul valide requis"; return }
+        guard var value = Cents.parse(amount, currency: currency), value.raw != 0 else { error = "Montant non nul valide requis"; return }
+        if guided {
+            guard value.raw > 0 && value.raw <= FinancialSetupMoney.maximumCents else { error = "Recopie un montant positif valide"; return }
+            if (existing?.amount_cents.raw ?? 0) < 0 { value = Cents(-value.raw) }
+        }
         busy = true; defer { busy = false }
         let rule = CalendarRule(id: existing?.id ?? "", asset_id: account, label: label, amount_cents: value, date: date.opaleDayString, frequency: frequency, end_date: hasEnd ? end.opaleDayString : nil, active: active, merchant_key: existing?.merchant_key ?? detected?.merchantKey ?? "")
         do { let _: APIClient.EmptyResponse = try await session.api.request(existing == nil ? "POST" : "PATCH", "/v1/calendar" + (existing.map { "/\($0.id)" } ?? ""), body: rule); session.changed(); saved(); dismiss() } catch { self.error = error.localizedDescription }

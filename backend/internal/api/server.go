@@ -40,12 +40,12 @@ func (s *Server) journal(r *http.Request, profileID *string, event, detail strin
 func NewServer(st *store.Store, cfg config.Config, log *slog.Logger, runner *jobs.Runner) *Server {
 	var homelab, cloud ai.Provider
 	if cfg.OllamaURL != "" {
-		homelab = ai.NewOllama(cfg.OllamaURL, cfg.OllamaModel)
+		homelab = ai.NewOllamaAuthenticated(cfg.OllamaURL, cfg.OllamaModel, cfg.OllamaAPIKey)
 		log.Info("ai: niveau N2 (homelab) configuré")
 	}
 	if cfg.AnthropicAPIKey != "" && cfg.CloudAI {
-		cloud = ai.NewAnthropic(cfg.AnthropicAPIKey)
-		log.Info("ai: niveau N3 (cloud Fable 5) configuré")
+		cloud = ai.NewAnthropicWithModel(cfg.AnthropicAPIKey, cfg.AnthropicModel)
+		log.Info("ai: niveau N3 (cloud) configuré")
 	}
 
 	var v *vault.Vault
@@ -96,6 +96,8 @@ func (s *Server) Routes() http.Handler {
 
 			r.Post("/auth/logout", s.handleLogout)
 			r.Get("/me", s.handleMe)
+			r.Get("/journey", s.handleJourney)
+			r.Put("/journey", s.handleSaveJourney)
 			r.Patch("/me", s.handleUpdateMe)
 			r.Get("/contracts", s.handleContracts)
 			r.Put("/contracts/{id}", s.handleSaveContract)

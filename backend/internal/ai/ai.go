@@ -1,7 +1,7 @@
 // Package ai est l'AI ROUTER d'Opale (EIA-010) : il route chaque demande
 // d'explication vers le bon niveau de la cascade —
 //
-//	N2 homelab (Ollama, privé)  →  N3 cloud (Fable 5, données structurées minimisées)
+//	N2 homelab (Ollama, privé)  →  N3 cloud (Claude, données structurées minimisées)
 //
 // (le niveau N1 vit sur l'iPhone, côté app.)
 //
@@ -23,7 +23,7 @@ import (
 // Tiers de la cascade.
 const (
 	TierHomelab = "n2" // Ollama sur le homelab — données complètes, privées
-	TierCloud   = "n3" // Fable 5 — uniquement des données structurées minimisées
+	TierCloud   = "n3" // Cloud — uniquement des données structurées minimisées
 	TierNone    = ""   // aucun provider : repli déterministe
 )
 
@@ -42,6 +42,8 @@ type Request struct {
 	AllowCloud bool
 	// MaxTokens : borne de la réponse (défaut raisonnable si 0).
 	MaxTokens int
+	// Provider: auto (default), homelab or cloud. A choice never grants consent.
+	Provider string
 }
 
 // Response — la réponse d'un niveau de la cascade.
@@ -80,18 +82,22 @@ func (r *Router) HomelabAvailable(ctx context.Context) bool {
 }
 
 // CloudConfigured indique si le niveau N3 est configuré.
-func (r *Router) CloudConfigured() bool { return r.cloud != nil }
+func (r *Router) CloudConfigured() bool   { return r.cloud != nil }
+func (r *Router) HomelabConfigured() bool { return r.homelab != nil }
 
 // Explain route la demande : N2 d'abord (privé), N3 ensuite si l'appelant
 // l'autorise ET qu'une variante anonymisée existe. Sinon ErrUnavailable —
 // l'appelant affiche alors son repli déterministe.
 func (r *Router) Explain(ctx context.Context, req Request) (Response, error) {
+	if req.Provider != "" && req.Provider != "auto" && req.Provider != "homelab" && req.Provider != "cloud" {
+		return Response{}, ErrUnavailable
+	}
 	if req.MaxTokens <= 0 {
 		req.MaxTokens = 700
 	}
 
 	// ── N2 : homelab, données complètes, jamais anonymisées (privé). ──────
-	if r.homelab != nil && r.homelab.Available(ctx) {
+	if req.Provider != "cloud" && r.homelab != nil && r.homelab.Available(ctx) {
 		start := time.Now()
 		text, err := r.homelab.Generate(ctx, req.System, req.Prompt, req.MaxTokens)
 		if err == nil {
@@ -103,7 +109,7 @@ func (r *Router) Explain(ctx context.Context, req Request) (Response, error) {
 
 	// ── N3 : cloud — seulement minimisé ET consenti (EIA-022/031). ───────
 	cloudPrompt, cloudErr := req.CloudFacts.Prompt()
-	if r.cloud != nil && req.AllowCloud && cloudErr == nil {
+	if req.Provider != "homelab" && r.cloud != nil && req.AllowCloud && cloudErr == nil {
 		start := time.Now()
 		text, err := r.cloud.Generate(ctx, req.System, cloudPrompt, req.MaxTokens)
 		if err == nil {

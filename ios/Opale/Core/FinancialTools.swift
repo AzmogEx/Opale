@@ -80,6 +80,7 @@ struct VariableIncome: Codable, Equatable, Identifiable, Sendable {
     var merchantKey = ""
     var active = true
     var note = ""
+    var isFixed: Bool { frequency != "once" && low == usual && usual == high }
     enum CodingKeys: String, CodingKey {
         case id, revision, name, kind, currency, frequency, forecast, active, note
         case low = "low_cents", usual = "usual_cents", high = "high_cents", nextDate = "next_date"
@@ -91,9 +92,9 @@ struct VariableIncome: Codable, Equatable, Identifiable, Sendable {
 enum FinancialTools {
     static let currencies = ["EUR", "USD", "GBP", "CHF", "JPY", "KWD", "CAD", "AUD"]
     static func frequencyLabel(_ value: String) -> String {
-        switch value { case "once": "Ponctuel"; case "monthly": "Mensuel"; case "quarterly": "Trimestriel"; case "yearly": "Annuel"; default: value }
+        switch value { case "once": "Ponctuel"; case "weekly": "Hebdomadaire"; case "monthly": "Mensuel"; case "quarterly": "Trimestriel"; case "yearly": "Annuel"; default: value }
     }
-    static func annualMultiplier(_ frequency: String) -> Decimal {
+    nonisolated static func annualMultiplier(_ frequency: String) -> Decimal {
         switch frequency { case "monthly": 12; case "quarterly": 4; case "yearly": 1; default: 0 }
     }
     static func amount(_ text: String, currency: String, zeroAllowed: Bool = false) -> Cents? {

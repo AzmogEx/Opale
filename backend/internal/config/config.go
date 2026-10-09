@@ -18,11 +18,13 @@ type Config struct {
 
 	// IA en cascade (P5, EIA-001→003).
 	// N2 — homelab : URL d'un serveur Ollama (vide = niveau indisponible).
-	OllamaURL   string
-	OllamaModel string
+	OllamaURL    string
+	OllamaModel  string
+	OllamaAPIKey string
 	// N3 — cloud : clé API Anthropic (vide = niveau indisponible) et
 	// interrupteur global (EIA-022 : le cloud reste opt-in).
 	AnthropicAPIKey string
+	AnthropicModel  string
 	CloudAI         bool
 
 	// Coffre-fort (P6, EF-064) : clé AES-256 en hexadécimal (64 caractères).
@@ -88,7 +90,9 @@ func Load() (Config, error) {
 	// pleinement fonctionnelle sur le moteur déterministe (EIA-021).
 	c.OllamaURL = os.Getenv("OPALE_OLLAMA_URL")
 	c.OllamaModel = env("OPALE_OLLAMA_MODEL", "llama3.1:8b")
+	c.OllamaAPIKey = os.Getenv("OPALE_OLLAMA_API_KEY")
 	c.AnthropicAPIKey = os.Getenv("OPALE_ANTHROPIC_API_KEY")
+	c.AnthropicModel = env("OPALE_ANTHROPIC_MODEL", "claude-sonnet-5-5")
 	c.CloudAI = env("OPALE_CLOUD_AI", "off") == "on"
 	c.VaultKey = os.Getenv("OPALE_VAULT_KEY")
 

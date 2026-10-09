@@ -41,7 +41,7 @@ func TestLabelSuggestionPrivatePreviewAndOwnership(t *testing.T) {
 	var body string
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/tags" {
-			io.WriteString(w, `{}`)
+			io.WriteString(w, `{"models":[{"name":"synthetic-model:latest"}]}`)
 			return
 		}
 		calls.Add(1)

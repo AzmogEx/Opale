@@ -107,3 +107,23 @@ La couverture UI est ciblée. Les autres formulaires et écrans sont revus et co
 | Performance et déploiement | App/widget/tests compilés et app installée en simulateur | Mesurer 60–120 fps avec Instruments sur appareil ; configurer signature, App Group et TLS de l’hôte cible ; les tests locaux utilisent HTTP de boucle locale |
 
 Aucune banque réelle, livraison APNs, session Face ID physique ou inférence Foundation Models sur téléphone n’est revendiquée comme validée par ces tests.
+
+## Parcours guidé et choix IA — 9 octobre 2026
+
+L’accueil iOS devient « Mon parcours » : comptes, revenus, charges fixes, abonnements, biens/crédits, budget/projets, puis bilan expliqué. Chaque étape présente les données existantes et leur édition. Les ajouts déclenchent le rechargement même quand une étape est ouverte. La progression est conservée sur le serveur avec révision ; le budget non validé dispose d’un brouillon local lié au serveur, au profil et à la révision. Les étapes passées restent distinctes des étapes vérifiées. Le bilan n’affiche aucun reste disponible tant que revenus, charges, abonnements et budget n’ont pas été vérifiés.
+
+L’assistant propose Automatique, Mon PC et Cloud. Foundation Models n’intercepte plus le chat. Ollama vérifie le modèle installé ; Claude est configurable. Les sorties financières utilisent des références de faits, d’explications et d’actions contrôlées. Le guide intégré fonctionne sans fournisseur. Les deux configurations sont décrites dans [le guide Coolify](../docs/COOLIFY.md#choisir-lia--pc-windows-ou-cloud).
+
+Validations réelles de cette mise à jour :
+
+- Backend : tests avec détection de concurrence des packages `ai`, `api` et `store`, vérifications ciblées du report de budget et du consentement, `go vet ./...` et `go build ./...` réussis. PostgreSQL de recette distinct de la base personnelle. La migration `0025`, les révisions concurrentes, l’isolation des profils, l’export et la remise à zéro du parcours sont couverts.
+- iOS : 32 tests unitaires réussis à 15:24:11, dont les cinq nouveaux tests du parcours. Après correction du rafraîchissement des étapes, les cinq tests du parcours sont à nouveau passés. Les autres changements depuis les 32 tests concernent la navigation et les contrôles de recette UI.
+- Recette UI complète réussie à 15:33:36 : compte à 2 000 €, salaire à 3 200 €, charge à 850 €, abonnement à 10,99 €, budget à 500 €, reste à 1 839,01 €, sept étapes vérifiées, trois règles de calendrier et **zéro transaction réalisée**. Ouverture des réglages IA, réponse intégrée « Par où commencer ? » et retour au parcours également vérifiés.
+- Recette UI de reprise réussie à 15:36:16 : cinq étapes passées, brouillon à 735,42 € conservé après fermeture et reconnexion, validation sur le serveur et bilan « À compléter » pour les étapes non vérifiées.
+- Compilation signée pour l’iPhone physique et installation de la version corrigée réussies. Le conteneur de données de l’app est conservé.
+
+Les premières recettes ont révélé un rafraîchissement attaché à l’accueil masqué pendant la navigation, corrigé en portant la tâche sur le `NavigationStack`, ainsi que des sélecteurs UI qui cherchaient des textes isolés alors qu’iOS regroupait les libellés. Les réussites ci-dessus proviennent des relances après correction ; la première exécution n’est pas déclarée verte.
+
+Preuves locales temporaires : `/tmp/opale-journey-backend-final.log`, `/tmp/opale-journey-targeted.log`, `/tmp/opale-journey-recette-verified.log`, `/tmp/opale-journey-manual-ui.log`, `/tmp/opale-journey-resume-ui.log` et les bundles XCTest dans `/tmp/opale-local-simulator-build/Logs/Test`. Pour rejouer les deux parcours sur l’API synthétique `127.0.0.1:58088`, utiliser la commande de validation précédente avec `-only-testing:OpaleUITests/FinancialSetupUITests` ; les profils créés par ces tests sont supprimés en fin de test.
+
+Les fournisseurs distants ont été testés par serveurs HTTP synthétiques. Aucune clé cloud personnelle ni connexion au PC Windows n’a été utilisée ; leur accessibilité, leur coût réel et leurs performances restent à vérifier après le choix du fournisseur.

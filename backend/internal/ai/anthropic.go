@@ -10,11 +10,10 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 )
 
-// Anthropic — niveau N3 de la cascade (EIA-003) : Claude Fable 5, réservé
-// aux demandes complexes, avec repli serveur vers Opus 4.8 en cas de refus.
+// Anthropic — niveau N3 facultatif, avec modèle configurable côté serveur.
 //
 // GARDE-FOU : ce provider ne reçoit JAMAIS de données brutes — le routeur
-// ne lui transmet que le prompt anonymisé (EIA-031/033).
+// ne lui transmet que les agrégats minimisés (EIA-031/033).
 type Anthropic struct {
 	client anthropic.Client
 	model  anthropic.Model
@@ -26,10 +25,16 @@ var ErrRefused = errors.New("ai: requête refusée par le modèle cloud")
 
 // NewAnthropic construit le provider N3.
 func NewAnthropic(apiKey string, options ...option.RequestOption) *Anthropic {
+	return NewAnthropicWithModel(apiKey, "claude-sonnet-5-5", options...)
+}
+func NewAnthropicWithModel(apiKey, model string, options ...option.RequestOption) *Anthropic {
+	if model == "" {
+		model = "claude-sonnet-5-5"
+	}
 	options = append([]option.RequestOption{option.WithAPIKey(apiKey), option.WithMaxRetries(1), option.WithRequestTimeout(25 * time.Second)}, options...)
 	return &Anthropic{
 		client: anthropic.NewClient(options...),
-		model:  anthropic.ModelClaudeFable5,
+		model:  anthropic.Model(model),
 	}
 }
 
@@ -40,18 +45,15 @@ func (a *Anthropic) Tier() string { return TierCloud }
 // les erreurs réseau sont gérées à l'appel (pas de sondage payant).
 func (a *Anthropic) Available(context.Context) bool { return true }
 
-// Generate appelle Fable 5. Le thinking est toujours actif sur ce modèle
-// (on omet donc le paramètre), et le repli serveur vers Opus 4.8 est activé
-// par défaut pour que les faux positifs de refus ne cassent pas la réponse.
+// Generate appelle le modèle configuré, sans dépendance à une API bêta
+// propre à un modèle. Une erreur ou un refus déclenche le repli du routeur.
 func (a *Anthropic) Generate(ctx context.Context, system, prompt string, maxTokens int) (string, error) {
-	resp, err := a.client.Beta.Messages.New(ctx, anthropic.BetaMessageNewParams{
+	resp, err := a.client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     a.model,
 		MaxTokens: int64(maxTokens),
-		Betas:     []anthropic.AnthropicBeta{anthropic.AnthropicBetaServerSideFallback2026_06_01},
-		Fallbacks: []anthropic.BetaFallbackParam{{Model: anthropic.ModelClaudeOpus4_8}},
-		System:    []anthropic.BetaTextBlockParam{{Text: system}},
-		Messages: []anthropic.BetaMessageParam{
-			anthropic.NewBetaUserMessage(anthropic.NewBetaTextBlock(prompt)),
+		System:    []anthropic.TextBlockParam{{Text: system}},
+		Messages: []anthropic.MessageParam{
+			anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),
 		},
 	})
 	if err != nil {
@@ -60,13 +62,13 @@ func (a *Anthropic) Generate(ctx context.Context, system, prompt string, maxToke
 
 	// Toujours vérifier le stop_reason avant de lire le contenu :
 	// un refus arrive en HTTP 200 avec un contenu vide ou partiel.
-	if resp.StopReason == anthropic.BetaStopReasonRefusal {
+	if string(resp.StopReason) == "refusal" {
 		return "", ErrRefused
 	}
 
 	var b strings.Builder
 	for _, block := range resp.Content {
-		if t, ok := block.AsAny().(anthropic.BetaTextBlock); ok {
+		if t, ok := block.AsAny().(anthropic.TextBlock); ok {
 			b.WriteString(t.Text)
 		}
 	}

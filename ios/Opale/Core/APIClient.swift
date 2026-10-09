@@ -495,17 +495,18 @@ final class APIClient: Sendable {
         let question: String
         let allowCloud: Bool
         var history: [HistoryMessage] = []
+        var provider = "auto"
         enum CodingKeys: String, CodingKey {
-            case history, question
+            case history, question, provider
             case allowCloud = "allow_cloud"
         }
     }
 
     struct HistoryMessage: Encodable { let role: String; let text: String }
 
-    func ask(question: String, allowCloud: Bool = false, history: [HistoryMessage] = []) async throws -> AskResponse {
+    func ask(question: String, allowCloud: Bool = false, history: [HistoryMessage] = [], provider: String = "auto") async throws -> AskResponse {
         try await request("POST", "/v1/assistant/ask",
-                          body: AskRequest(question: question, allowCloud: allowCloud, history: history))
+                          body: AskRequest(question: question, allowCloud: allowCloud, history: history, provider: provider))
     }
 
     func risks() async throws -> [Risk] {

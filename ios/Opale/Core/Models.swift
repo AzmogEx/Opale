@@ -453,10 +453,18 @@ struct Risk: Codable, Hashable, Identifiable, Sendable {
 struct AssistantStatus: Codable, Hashable, Sendable {
     var homelabAvailable: Bool
     var cloudConfigured: Bool
+    var homelabConfigured: Bool?
+    var homelabModel: String?
+    var cloudModel: String?
+    var cloudEnabled: Bool?
+    var cloudCredentialsConfigured: Bool?
+    var cloudAllowed: Bool?
 
     enum CodingKeys: String, CodingKey {
         case homelabAvailable = "homelab_available"
         case cloudConfigured = "cloud_configured"
+        case homelabConfigured = "homelab_configured", homelabModel = "homelab_model", cloudModel = "cloud_model"
+        case cloudEnabled = "cloud_enabled", cloudCredentialsConfigured = "cloud_credentials_configured", cloudAllowed = "cloud_allowed"
     }
 }
 
@@ -468,8 +476,11 @@ struct AskResponse: Codable, Hashable, Sendable {
     var facts: [AssistantFact]?
     var cloudEligible: Bool?
     var providerState: String?
-    enum CodingKeys: String, CodingKey { case answer, tier, state, facts; case cloudEligible = "cloud_eligible"; case providerState = "provider_state" }
+    var actions: [AssistantAction]?
+    enum CodingKeys: String, CodingKey { case answer, tier, state, facts, actions; case cloudEligible = "cloud_eligible"; case providerState = "provider_state" }
 }
+
+struct AssistantAction: Codable, Hashable, Identifiable, Sendable { var id: String; var title: String }
 
 /// Un scénario du Mode Décision (EF-052).
 struct DecisionScenario: Codable, Hashable, Identifiable, Sendable {

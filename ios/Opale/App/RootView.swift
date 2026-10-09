@@ -53,9 +53,9 @@ struct MainTabView: View {
         @Bindable var session = session
         TabView(selection: $selection) {
             Tab(value: .home) {
-                HomeView()
+                FinancialJourneyView()
             } label: {
-                Label("Accueil", systemImage: "circle.hexagongrid.fill")
+                Label("Parcours", systemImage: "list.number")
                     .symbolEffect(.bounce, value: selection == .home)
             }
             Tab(value: .flows) {
@@ -86,8 +86,18 @@ struct MainTabView: View {
         .sheet(isPresented: $session.showAlerts) { AlertsInboxView() }
         // Chaque changement d'onglet « clique » sous le doigt.
         .sensoryFeedback(.selection, trigger: selection)
-        .onChange(of: session.selectedTab, initial: true) { _, tab in
+        .onChange(of: session.selectedTab) { _, tab in
             selection = switch tab { case "flows": .flows; case "wealth": .wealth; case "projection": .projection; case "assistant": .assistant; default: .home }
+        }
+        .onChange(of: selection) { _, tab in
+            session.selectedTab = switch tab { case .home: "home"; case .flows: "flows"; case .wealth: "wealth"; case .projection: "projection"; case .assistant: "assistant" }
+        }
+        .onAppear {
+            if session.selectedTab != "home" {
+                selection = switch session.selectedTab { case "flows": .flows; case "wealth": .wealth; case "projection": .projection; case "assistant": .assistant; default: .home }
+            } else {
+                session.selectedTab = switch selection { case .home: "home"; case .flows: "flows"; case .wealth: "wealth"; case .projection: "projection"; case .assistant: "assistant" }
+            }
         }
     }
 }

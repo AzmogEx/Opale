@@ -2,40 +2,8 @@ import SwiftUI
 
 /// Le formulaire financier appartient au profil connecté, après déverrouillage.
 struct FinancialSetupGate: View {
-    @Environment(SessionStore.self) private var session
-    @State private var checked = false
-    @State private var presentation: SetupPresentation?
-
-    private struct SetupPresentation: Identifiable {
-        let id = UUID()
-        let state: FinancialSetupState
-    }
-
     var body: some View {
-        Group {
-            if checked || session.isOffline {
-                MainTabView()
-            } else {
-                ProgressView("Préparation de ton espace…")
-            }
-        }
-        .task(id: session.profileKey) {
-            let key = session.profileKey
-            defer { if key == session.profileKey { checked = true } }
-            guard !session.isOffline else { return }
-            do {
-                let state = try await session.api.fetchFinancialSetup()
-                guard !Task.isCancelled, key == session.profileKey else { return }
-                if state.shouldPrompt { presentation = SetupPresentation(state: state) }
-            } catch {
-                // Une panne ou un serveur plus ancien ne bloque pas les fonctions existantes.
-                // L'entrée des Réglages expose l'erreur et permet de réessayer.
-            }
-        }
-        .fullScreenCover(item: $presentation) { item in
-            FinancialSetupView(initialState: item.state)
-                .id(session.profileKey)
-        }
+        MainTabView()
     }
 }
 

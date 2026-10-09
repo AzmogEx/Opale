@@ -43,3 +43,55 @@ Ouvrir le site, créer un profil puis vérifier verrouillage, reconnexion, saisi
 Si le domaine renvoie 503, vérifier en priorité le service `web`, sa sonde `/readyz`, le domaine associé à `web` et son port interne 80. Un certificat `TRAEFIK DEFAULT CERT` indique que le certificat du domaine n'est pas encore correctement servi : contrôler DNS, route HTTPS et journaux ACME du proxy.
 
 Sauvegarder PostgreSQL et la clé du coffre avant les mises à jour ; voir [les scripts et la restauration isolée](EXPLOITATION.md#sauvegarder-et-restaurer). Depuis un terminal qui dispose du dépôt et de Docker sur le serveur, les scripts peuvent cibler le conteneur PostgreSQL Coolify via `OPALE_DB_CONTAINER` et les noms de rôle/base correspondants. Aucun accès SSH depuis Codex n'est nécessaire pour déployer dans l'interface Coolify.
+
+## Choisir l’IA : PC Windows ou cloud
+
+L’application iOS propose **Assistant → Choisir ou connecter mon IA** (également dans Réglages). Le choix est propre au profil : Automatique essaie le PC privé puis revient au moteur ; Mon PC ne cascade jamais vers le cloud ; Cloud demande un accord à chaque envoi. L’iPhone conserve la lecture locale de documents et les fonctions locales, sans intercepter le chat avec son petit modèle. Une réponse du moteur/guide reste disponible sans fournisseur. Le statut Ollama exige que **le modèle demandé figure dans `/api/tags`**, pas seulement un serveur HTTP qui répond.
+
+### Option PC Windows avec NVIDIA
+
+Sur Windows, installer [Ollama](https://docs.ollama.com/windows), mettre à jour le pilote NVIDIA et vérifier la mémoire disponible avec `nvidia-smi`. Un premier modèle à essayer est [Qwen3.5 9B](https://ollama.com/library/qwen3.5:9b) ; ce point de départ n’est pas un benchmark de la carte personnelle. Dans PowerShell :
+
+```powershell
+ollama pull qwen3.5:9b
+ollama run qwen3.5:9b
+ollama ps
+Invoke-RestMethod http://127.0.0.1:11434/api/tags
+```
+
+Vérifier dans `ollama ps` que le modèle utilise le GPU, puis sa vitesse sur une demande synthétique. Conserver l’écoute Ollama sur localhost. Le PC doit rester allumé ; sa mise en veille rend l’IA indisponible.
+
+Coolify étant sur un serveur distant, une adresse `192.168.*` du domicile ne suffit pas. Installer Tailscale sur le PC et le serveur distant, dans le même réseau privé, et limiter les droits d’accès au serveur API. Dans un terminal Windows administrateur, [Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve) peut publier Ollama **uniquement dans le réseau privé** :
+
+```powershell
+tailscale serve --bg http://127.0.0.1:11434
+tailscale serve status
+```
+
+Reporter l’URL HTTPS réellement affichée dans les variables **d’exécution du service API** de Coolify :
+
+```dotenv
+OPALE_OLLAMA_URL=https://nom-reel-du-pc.nom-reel-du-tailnet.ts.net
+OPALE_OLLAMA_MODEL=qwen3.5:9b
+OPALE_CLOUD_AI=off
+```
+
+Ne pas utiliser Tailscale Funnel ni ouvrir le port 11434 sur Internet. Un proxy privé qui exige un jeton Bearer peut recevoir `OPALE_OLLAMA_API_KEY` ; cette variable est facultative avec un accès privé correctement limité. Ne pas la confondre avec une clé de cloud Ollama.
+
+**La connexion doit fonctionner depuis le conteneur API**, pas seulement depuis l’hôte Coolify. Vérifier routage Docker vers le réseau Tailscale et résolution du nom privé. L’image API distroless ne contient pas de shell/curl : un outil de diagnostic temporaire dans le même réseau Docker permet de lire `/api/tags`, puis le bouton « Vérifier la connexion » dans l’app contrôle le vrai client backend. Aucun port hôte supplémentaire n’est nécessaire dans le Compose Opale.
+
+### Option cloud Claude
+
+Dans les secrets/variables d’exécution Coolify du service API :
+
+```dotenv
+OPALE_ANTHROPIC_API_KEY=<cle-secrete-du-compte>
+OPALE_ANTHROPIC_MODEL=claude-sonnet-5-5
+OPALE_CLOUD_AI=on
+```
+
+Le modèle est configurable ; vérifier l’accès et le coût dans la [documentation officielle Claude](https://platform.claude.com/docs/en/models/overview) et le compte fournisseur. Ne jamais committer la clé ni la saisir dans l’app. Redéployer la configuration, puis dans l’app ouvrir **Choisir mon IA → Autorisation et confidentialité de mon profil**, choisir « Cloud possible, avec consentement », enregistrer et sélectionner Cloud ou Automatique. L’activation serveur et l’autorisation du profil ne déclenchent aucun envoi à elles seules. Une clé configurée ne prouve ni un crédit disponible ni un accès au modèle ; une erreur déclenche le repli explicite.
+
+Le cloud reçoit uniquement une intention reconnue et les agrégats minimisés autorisés. La question libre, l’historique, les noms et les documents ne lui sont pas transmis. Son périmètre reste donc limité ; il ne s’agit pas d’un chat généraliste avec accès à tous les documents. Voir [le contrat IA](CONFIDENTIALITE-IA.md). Faire la première recette sur un profil synthétique et contrôler consentement, disponibilité, refus et retour au moteur.
+
+Le push sur `main` déclenche automatiquement le déploiement de cette ressource. La migration `0025` ajoute la progression du parcours ; elle conserve les données financières et reprend le budget de l’ancien formulaire terminé.

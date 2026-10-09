@@ -17,6 +17,7 @@ struct SettingsView: View {
 	@State private var showFXRates = false
 	@State private var showBank = false
 	@State private var showFinancialSetup = false
+    @State private var hasLegacyDraft = false
 	@State private var exportedFileURL: URL?
 	@State private var isExporting = false
 
@@ -31,6 +32,7 @@ struct SettingsView: View {
 		NavigationStack {
 			Form {
                 Section("Outils") {
+                    NavigationLink { AssistantSettingsView() } label: { Label("Choisir et connecter mon IA", systemImage: "server.rack") }
                     NavigationLink { ContractsView() } label: { Label("Contrats et abonnements", systemImage: "doc.text") }
                     NavigationLink { VariableIncomesView() } label: { Label("Revenus variables", systemImage: "waveform.path") }
                     NavigationLink { InvestmentExplorerView() } label: { Label("Explorer les investissements", systemImage: "globe.europe.africa") }
@@ -68,6 +70,9 @@ struct SettingsView: View {
 			.task {
 				status = try? await session.api.assistantStatus()
 				bankStatus = try? await session.api.bankStatus()
+                if let setup = try? await session.api.fetchFinancialSetup() {
+                    hasLegacyDraft = setup.status == "draft" || setup.status == "skipped"
+                }
 			}
 			.sheet(isPresented: $showAccessLog) { AccessLogSheet() }
 			.sheet(isPresented: $showFXRates) { FXRatesSheet {} }
@@ -100,7 +105,13 @@ struct SettingsView: View {
 	private var profileSection: some View {
 		Section("Profil") {
 			LabeledContent("Connecté en tant que", value: session.profileName)
-                Button { showFinancialSetup = true } label: { Label("Ma situation de départ", systemImage: "list.clipboard") }
+                Button { session.selectedTab = "home"; dismiss() } label: { Label("Mon parcours guidé", systemImage: "list.number") }
+                if hasLegacyDraft {
+                    DisclosureGroup("Brouillon de l’ancien formulaire") {
+                        Text("Ce brouillon reste consultable. Vérifie les éléments déjà ajoutés dans le parcours avant de le finaliser, pour éviter les doublons.").font(.caption).foregroundStyle(.secondary)
+                        Button("Reprendre l’ancien brouillon") { showFinancialSetup = true }
+                    }
+                }
                 NavigationLink("Modifier le profil / confidentialité") { ProfileSettingsView() }
 		}
 	}

@@ -401,6 +401,7 @@ type conversationMessage struct {
 	Text string `json:"text"`
 }
 type askRequest struct {
+	Provider   string                `json:"provider,omitempty"`
 	Question   string                `json:"question"`
 	AllowCloud bool                  `json:"allow_cloud"`
 	History    []conversationMessage `json:"history,omitempty"`
@@ -423,6 +424,10 @@ func (s *Server) handleAssistantAsk(w http.ResponseWriter, r *http.Request) {
 	var req askRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, 400, "invalid_body", err.Error())
+		return
+	}
+	if req.Provider != "" && req.Provider != "auto" && req.Provider != "homelab" && req.Provider != "cloud" {
+		writeError(w, 400, "invalid_provider", "Choisis auto, homelab ou cloud")
 		return
 	}
 	req.Question = strings.TrimSpace(req.Question)
@@ -454,8 +459,12 @@ func (s *Server) handleAssistantAsk(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"answer": answer, "tier": "data", "state": "grounded", "facts": facts, "cloud_eligible": false})
 		return
 	}
+	if answer, actions, ok := ai.LearningAnswer(req.Question); ok {
+		writeJSON(w, 200, map[string]any{"answer": answer, "tier": "guide", "state": "grounded", "facts": []assistantFact{}, "actions": actions, "cloud_eligible": false})
+		return
+	}
 	intent := ai.CloudIntent(req.Question)
-	if intent == "" {
+	if intent == "" && req.Provider != "cloud" {
 		intent, _ = s.ai.InterpretIntent(r.Context(), question)
 	}
 	// An arbitrary unsupported request must never be presented as a successful analysis.
@@ -516,7 +525,9 @@ func (s *Server) handleAssistantAsk(w http.ResponseWriter, r *http.Request) {
 	}
 	fallback := strings.Join(chunks, " ")
 	statements["summary"] = fallback
-	request := ai.Request{Task: "assistant_ask", System: ai.FactSelectionSystem, Prompt: twin.Describe(snap) + "\nQuestion : " + req.Question, CloudFacts: cloudContext(snap, intent), AllowCloud: req.AllowCloud && p.PrivacyDefault == "N2" && s.cfg.CloudAI, MaxTokens: 500}
+	guidance, actions := ai.Guidance(intent)
+	fallback += " " + guidance
+	request := ai.Request{Provider: req.Provider, Task: "assistant_ask", System: ai.CoachingSystem, Prompt: twin.Describe(snap) + "\nQuestion : " + req.Question, CloudFacts: cloudContext(snap, intent), AllowCloud: req.AllowCloud && p.PrivacyDefault == "N2" && s.cfg.CloudAI, MaxTokens: 500}
 	// History stays in the private homelab prompt, never in CloudFacts.
 	if len(req.History) > 0 {
 		h, _ := json.Marshal(req.History)
@@ -526,8 +537,11 @@ func (s *Server) handleAssistantAsk(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	answer, tier, providerState := fallback, "data", "unavailable"
 	if response, e := s.ai.Explain(ctx, request); e == nil {
-		if selected, e := ai.SelectFacts(response.Text, statements); e == nil {
+		if selected, chosenActions, e := ai.SelectCoaching(response.Text, statements); e == nil {
 			answer, tier, providerState = selected, response.Tier, "available"
+			if len(chosenActions) > 0 {
+				actions = chosenActions
+			}
 		} else {
 			providerState = "invalid_response"
 		}
@@ -537,14 +551,20 @@ func (s *Server) handleAssistantAsk(w http.ResponseWriter, r *http.Request) {
 		facts = append(facts, assistantFact{ID: "data_completeness", Unit: "assessment", Period: date, Source: "net-worth", Text: warning})
 		answer = warning + " " + answer
 	}
-	writeJSON(w, 200, map[string]any{"answer": answer, "tier": tier, "state": "grounded", "facts": facts, "provider_state": providerState, "cloud_eligible": p.PrivacyDefault == "N2" && s.cfg.CloudAI && s.ai.CloudConfigured()})
+	writeJSON(w, 200, map[string]any{"answer": answer, "tier": tier, "state": "grounded", "facts": facts, "actions": actions, "provider_state": providerState, "cloud_eligible": req.Provider != "homelab" && tier != ai.TierCloud && p.PrivacyDefault == "N2" && s.cfg.CloudAI && s.ai.CloudConfigured()})
 }
 
 // handleAssistantStatus expose l'état de la cascade (UX EIA-021/022).
 func (s *Server) handleAssistantStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"homelab_available": s.ai.HomelabAvailable(r.Context()),
-		"cloud_configured":  s.ai.CloudConfigured(),
+		"homelab_available":            s.ai.HomelabAvailable(r.Context()),
+		"homelab_configured":           s.ai.HomelabConfigured(),
+		"homelab_model":                s.cfg.OllamaModel,
+		"cloud_model":                  s.cfg.AnthropicModel,
+		"cloud_enabled":                s.cfg.CloudAI,
+		"cloud_credentials_configured": s.cfg.AnthropicAPIKey != "",
+		"cloud_allowed":                profileFromContext(r.Context()).PrivacyDefault == "N2",
+		"cloud_configured":             s.ai.CloudConfigured(),
 	})
 }
 

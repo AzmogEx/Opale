@@ -104,7 +104,7 @@ private struct GoalRow: View {
 }
 
 /// Création d'un objectif : nom, montant, échéance, actif source.
-private struct GoalFormSheet: View {
+struct GoalFormSheet: View {
     var existing: GoalStatus? = nil
     var onSaved: () -> Void
 

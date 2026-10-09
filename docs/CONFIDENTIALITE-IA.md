@@ -1,6 +1,6 @@
 # Contrat de confidentialité et assistant
 
-Version du 8 octobre 2026. Le moteur financier calcule ; les modèles sélectionnent ou interprètent, sans fabriquer les chiffres affichés.
+Version du 9 octobre 2026. Le moteur financier calcule ; les modèles sélectionnent ou interprètent, sans fabriquer les chiffres affichés.
 
 ## Sortie cloud autorisée
 
@@ -14,9 +14,17 @@ Les fournisseurs ne peuvent pas déclencher de mutation, accéder à d’autres 
 
 Les réponses possèdent `state` : `grounded`, `clarification_needed` ou `unsupported`, ainsi que `provider_state` qui distingue fournisseur disponible, indisponible ou réponse invalide. Une réponse déterministe reste fondée même quand aucun modèle ne fonctionne ; elle est identifiée comme telle avec `tier:data`.
 
-Les faits portent identifiant, unité, période, provenance, texte serveur et, pour un montant, `value_cents`. Le modèle renvoie uniquement des identifiants de faits autorisés. Le texte visible est assemblé à partir des faits du moteur. Un chiffre, un champ supplémentaire, un identifiant inconnu ou du texte libre dans la réponse fournisseur invalide cette réponse. L’utilisateur reçoit alors les faits déterministes et un état fournisseur explicite.
+Les faits portent identifiant, unité, période, provenance, texte serveur et, pour un montant, `value_cents`. Le modèle renvoie uniquement des identifiants de faits, d’explications et de destinations autorisés. Le texte visible est assemblé à partir des faits du moteur et d’un catalogue explicatif contrôlé ; les actions ouvrent des écrans, sans mutation ni ordre financier. Un chiffre, un champ supplémentaire, un identifiant inconnu ou du texte libre dans la réponse fournisseur invalide cette réponse. L’utilisateur reçoit alors les faits déterministes et un état fournisseur explicite.
+
+Les explications intégrées restent pédagogiques : les notions de diversification et d’ETF suivent [les repères de l’AMF](https://www.amf-france.org/fr/etf-exchange-traded-fund), et la réserve disponible [ceux du portail Banque de France](https://www.mesquestionsdargent.fr/pourquoi-epargner/une-epargne-de-precaution), vérifiés le 9 octobre 2026. Elles ne sélectionnent aucun produit pour l’utilisateur.
 
 Les demandes sont annulables et bornées en temps. Les erreurs et décisions de routage sont journalisées sans payload, question ou montant. Les documents restent N3 et ne sont pas une entrée du modèle cloud. Le mode discret masque les réponses, leurs chiffres et leurs représentations accessibles.
+
+## Choix de moteur et préparation
+
+Le chat iOS ne lance plus Foundation Models avant le serveur. Les fonctions locales de l’iPhone restent séparées (lecture de documents, libellés). Le choix de fournisseur est propre au profil : `auto`, `homelab` ou `cloud`. Le mode homelab interdit toute cascade cloud ; le mode cloud saute le fournisseur privé et ne lui transmet pas la question pour interprétation. Aucun choix de mode ne vaut consentement. Les requêtes de données restent déterministes ; certaines explications courantes sont intégrées et identifiées `tier:guide`, sans appel fournisseur.
+
+Le statut distingue homelab configuré, serveur/modèle joignable, clé cloud renseignée, interrupteur cloud et autorisation du profil. Ollama vérifie que le modèle est installé, supporte un jeton Bearer de proxy privé et demande un JSON structuré. Le modèle Claude est configurable côté serveur. Aucun test local ne certifie les performances du PC personnel ni l’accès au compte cloud ; [les étapes de connexion et recette](COOLIFY.md#choisir-lia--pc-windows-ou-cloud) restent explicites.
 
 ## Preuves et validation extérieure
 

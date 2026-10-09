@@ -1,6 +1,6 @@
 # Opale
 
-Gestion de patrimoine personnelle, auto-hébergée : API Go/PostgreSQL, application iOS SwiftUI et web SvelteKit. Les cinq espaces sont **Accueil, Flux, Patrimoine, Projection, Assistant**. Le moteur réalise les calculs ; l’IA facultative commente des faits contrôlés.
+Gestion de patrimoine personnelle, auto-hébergée : API Go/PostgreSQL, application iOS SwiftUI et web SvelteKit. Sur iPhone, les cinq espaces sont **Parcours, Flux, Patrimoine, Projection, Assistant** ; le tableau de bord détaillé reste accessible depuis le parcours. Le moteur réalise les calculs ; l’IA facultative commente des faits contrôlés.
 
 ## Démarrer
 
@@ -23,13 +23,16 @@ En développement natif : Go 1.26+, PostgreSQL17, Node22. `make db` démarre Pos
 
 | Espace | Parcours disponibles |
 |---|---|
-| Accueil | Patrimoine net et historique, trésorerie, indicateurs, alertes, jalons |
+| Parcours (iOS) | Saisie ordonnée en sept étapes, reprise, explications et priorités |
+| Tableau de bord | Patrimoine net et historique, trésorerie, indicateurs, alertes, jalons |
 | Flux | Saisie/correction/suppression, virements atomiques, capital remboursé lié à une dette, imports CSV/OFX, pagination/filtres, catégories/règles, budgets, récurrences/calendrier, partage explicite, Wrapped |
 | Patrimoine | Actifs/dettes/valorisations, devises, immobilier, investissements et flux, objets, société/CCA, coffre chiffré, contacts/transmission, banque et cotations facultatives |
 | Projection | FIRE, inflation, objectifs, scénarios comparés, arbitrages achat/location et crédit/investissement, crédits, fiscalité/PER documentés |
 | Assistant | Conversation, états de calcul et sources, bilan mensuel, jumeau patrimonial, cloud avec consentement explicite lorsque autorisé |
 
-Sur iPhone, les nouveaux profils disposent d’un formulaire en six étapes : revenu net, compte principal et solde facultatif, charges fixes, abonnements, budget variable et objectif, puis récapitulatif. Le brouillon se reprend dans **Réglages → Ma situation de départ**. La validation crée les échéances prévisionnelles et l’objectif sans inventer de transactions réalisées. Les profils déjà renseignés peuvent ouvrir ce parcours depuis les Réglages ; la démonstration en est exclue. Le budget variable sert uniquement à l’estimation initiale. Cette fonction nécessite les migrations backend `0022` et `0023`, appliquées automatiquement au démarrage de l’API après redéploiement.
+Sur iPhone, **Mon parcours** est l’accueil pour tous les profils : comptes et soldes → revenus fixes/variables → charges → abonnements → biens/crédits → budget/projets → bilan expliqué. Chaque page reprend les données existantes, propose la saisie et explique son utilité. Les ajouts sont enregistrés immédiatement ; la progression se synchronise au profil, avec contrôle de révision, et le budget en cours dispose d’un brouillon local protégé. Une étape passée reste signalée ; un budget incomplet n’invente pas de reste disponible. Les prévisions ne créent aucune transaction réalisée. La migration **0025** conserve le budget d’un ancien formulaire terminé et ajoute seulement le suivi du parcours.
+
+**Assistant → Choisir ou connecter mon IA** prépare les deux options : PC Windows avec Ollama par réseau privé, ou Claude cloud avec modèle configurable. Le petit modèle de l’iPhone n’intercepte plus le chat. Le mode Mon PC interdit la cascade cloud ; le cloud exige configuration serveur, autorisation du profil et accord pour la demande. Le guide intégré explique les notions usuelles sans modèle et propose des destinations utiles. Les réponses financières combinent des faits et explications contrôlés. Configuration et limites : [guide Coolify](docs/COOLIFY.md#choisir-lia--pc-windows-ou-cloud).
 
 Sur iPhone, **Réglages → Contrats et abonnements** suit tarifs, essais, engagements, renouvellements et préavis. Les hausses du dernier débit comptabilisé sont proposées à confirmation sur le marchand, le compte et la devise choisis. L’historique des tarifs est conservé ; arrêter le suivi ne résilie pas le fournisseur. Les abonnements du formulaire initial sont repris sans créer une seconde prévision.
 

@@ -36,6 +36,7 @@ func (s *Store) ExportZIP(ctx context.Context, profileID string, out io.Writer, 
 		tables := []struct{ name, query string }{
 			{"profile", `SELECT jsonb_build_object('id',id,'name',name,'privacy_default',privacy_default,'created_at',created_at,'updated_at',updated_at) FROM profiles WHERE id=$1`},
 			{"profile_onboarding", `SELECT to_jsonb(t) FROM profile_onboarding t WHERE profile_id=$1`},
+			{"profile_journey", `SELECT to_jsonb(t) FROM profile_journey t WHERE profile_id=$1`},
 			{"assets", `SELECT to_jsonb(t)||jsonb_build_object('currency_exponent',currency_exponent(currency)) FROM assets t WHERE profile_id=$1 ORDER BY id`},
 			{"liabilities", `SELECT to_jsonb(t)||jsonb_build_object('currency_exponent',currency_exponent(currency)) FROM liabilities t WHERE profile_id=$1 ORDER BY id`},
 			{"transactions", `SELECT to_jsonb(t) FROM transactions t WHERE profile_id=$1 ORDER BY occurred_on,id`},

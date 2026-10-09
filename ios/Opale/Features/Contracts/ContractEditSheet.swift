@@ -3,6 +3,7 @@ import SwiftUI
 struct ContractEditSheet: View {
     @Environment(SessionStore.self) private var session
     @Environment(\.dismiss) private var dismiss
+    private let guided: Bool
     @State private var value: FinancialContract
     @State private var amount: String
     @State private var accounts: [Asset] = []
@@ -11,7 +12,8 @@ struct ContractEditSheet: View {
     @State private var showImport = false
     @State private var importingCurrency = false
 
-    init(initial: FinancialContract) {
+    init(initial: FinancialContract, guided: Bool = false) {
+        self.guided = guided
         _value = State(initialValue: initial)
         _amount = State(initialValue: initial.amount.raw == 0 ? "" : MoneyFormat.input(initial.amount, currency: initial.currency))
     }
@@ -46,23 +48,9 @@ struct ContractEditSheet: View {
                     Text("Avec un compte, ce tarif sera prévu au calendrier. Il ne modifie pas ton solde comme si le prélèvement était déjà passé.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                Section("Détection des hausses") {
-                    TextField("Libellé marchand sur le relevé, facultatif", text: $value.merchantKey)
-                        .textInputAutocapitalization(.characters).autocorrectionDisabled().accessibilityIdentifier("contract.merchant")
-                    Text("Copie le nom du marchand tel qu’il apparaît sur tes opérations. Le dernier débit comptabilisé de ce marchand, sur ce compte et dans cette devise, sera comparé au tarif déclaré. Chaque hausse devra être confirmée. Sans libellé marchand, vérifie les doublons avec les récurrences détectées.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Section("Engagement et rappels") {
-                    FinancialOptionalDate(title: "Fin d’essai gratuit", value: $value.trialEnd)
-                    FinancialOptionalDate(title: "Fin d’engagement", value: $value.commitmentEnd)
-                    FinancialOptionalDate(title: "Date de renouvellement", value: $value.renewalDate)
-                    Toggle("Reconduction automatique", isOn: $value.autoRenew)
-                    Stepper("Préavis : \(value.noticeDays) jours", value: $value.noticeDays, in: 0...365)
-                    Stepper("Rappel : \(value.reminderDays) jours avant", value: $value.reminderDays, in: 0...90)
-                    Text("Renseigne les dates et le préavis indiqués dans ton contrat. Les rappels s’affichent dans Contrats et Alertes ; les notifications nécessitent leur activation.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Section("Notes") { TextField("Référence, conditions de résiliation…", text: $value.note, axis: .vertical).lineLimit(3...6) }
+                if guided {
+                    Section { DisclosureGroup("Options : hausses, engagement et rappels") { advancedFields } }
+                } else { advancedFields }
                 if let error { Section { Text(error).foregroundStyle(OpaleTheme.loss) } }
             }.opaleList().scrollDismissesKeyboard(.interactively).disabled(busy)
             .navigationTitle(value.revision == 0 ? "Nouveau contrat" : "Modifier le contrat").navigationBarTitleDisplayMode(.inline)
@@ -91,12 +79,33 @@ struct ContractEditSheet: View {
             .interactiveDismissDisabled(busy)
         }
     }
+    @ViewBuilder private var advancedFields: some View {
+                Section("Détection des hausses") {
+                    TextField("Libellé marchand sur le relevé, facultatif", text: $value.merchantKey)
+                        .textInputAutocapitalization(.characters).autocorrectionDisabled().accessibilityIdentifier("contract.merchant")
+                    Text("Copie le nom du marchand tel qu’il apparaît sur tes opérations. Le dernier débit comptabilisé de ce marchand, sur ce compte et dans cette devise, sera comparé au tarif déclaré. Chaque hausse devra être confirmée. Sans libellé marchand, vérifie les doublons avec les récurrences détectées.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Section("Engagement et rappels") {
+                    FinancialOptionalDate(title: "Fin d’essai gratuit", value: $value.trialEnd)
+                    FinancialOptionalDate(title: "Fin d’engagement", value: $value.commitmentEnd)
+                    FinancialOptionalDate(title: "Date de renouvellement", value: $value.renewalDate)
+                    Toggle("Reconduction automatique", isOn: $value.autoRenew)
+                    Stepper("Préavis : \(value.noticeDays) jours", value: $value.noticeDays, in: 0...365)
+                    Stepper("Rappel : \(value.reminderDays) jours avant", value: $value.reminderDays, in: 0...90)
+                    Text("Renseigne les dates et le préavis indiqués dans ton contrat. Les rappels s’affichent dans Contrats et Alertes ; les notifications nécessitent leur activation.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Section("Notes") { TextField("Référence, conditions de résiliation…", text: $value.note, axis: .vertical).lineLimit(3...6) }
+    }
     private func loadAccounts() async {
         let key = session.profileKey, api = session.api
         do {
             let assets = try await api.listAssets()
             guard key == session.profileKey, !Task.isCancelled else { return }
             accounts = assets.filter { !$0.archived && ($0.kind == .checking || $0.kind == .savings) }
+            if guided, value.revision == 0, value.assetID.isEmpty,
+               let account = accounts.first(where: { $0.currency == value.currency }) { value.assetID = account.id }
         } catch { guard key == session.profileKey, !Task.isCancelled else { return }; self.error = error.localizedDescription }
     }
     private func save() async {

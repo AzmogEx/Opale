@@ -8,6 +8,13 @@ struct AssetFormSheet: View {
     @Environment(SessionStore.self) private var session
     @Environment(\.dismiss) private var dismiss
     var onSaved: () -> Void
+    var allowedKinds: [AssetKind] = AssetKind.allCases
+
+    init(allowedKinds: [AssetKind] = AssetKind.allCases, onSaved: @escaping () -> Void) {
+        self.allowedKinds = allowedKinds
+        self.onSaved = onSaved
+        _kind = State(initialValue: allowedKinds.first ?? .checking)
+    }
 
     @State private var name = ""
     @State private var kind: AssetKind = .checking
@@ -25,6 +32,7 @@ struct AssetFormSheet: View {
     private var isValid: Bool {
         !name.trimmingCharacters(in: .whitespaces).isEmpty
             && (initialValue.isEmpty || parsedValue != nil)
+            && (kind == .checking || (parsedValue?.raw ?? 0) >= 0)
     }
 
     var body: some View {
@@ -33,7 +41,7 @@ struct AssetFormSheet: View {
                 Section("Actif") {
                     TextField("Nom (ex. Compte courant BNP)", text: $name)
                     Picker("Type", selection: $kind) {
-                        ForEach(AssetKind.allCases) { kind in
+                        ForEach(allowedKinds) { kind in
                             Label(kind.label, systemImage: kind.systemImage).tag(kind)
                         }
                     }
@@ -46,7 +54,8 @@ struct AssetFormSheet: View {
                 Section("Valeur de référence en \(currency) (optionnel)") {
                     DatePicker("Date de référence", selection: $initialDate, in: ...Date.now, displayedComponents: .date)
                     TextField("Ex. 12 500,00", text: $initialValue)
-                        .keyboardType(.decimalPad)
+                        .keyboardType(kind == .checking ? .numbersAndPunctuation : .decimalPad)
+                    if kind == .checking { Text("Recopie le solde à cette date. En cas de découvert, saisis un montant négatif avec le signe −.").font(.caption).foregroundStyle(.secondary) }
                     if !initialValue.isEmpty, parsedValue == nil {
                         Text("Montant invalide")
                             .font(.footnote)

@@ -49,19 +49,9 @@ Idéalement : réplique le dossier `/backups/opale` hors du homelab
 (rclone vers un stockage chiffré, disque externe…). Test de restauration :
 `gunzip -c dump.sql.gz | docker exec -i <db> pg_restore -U opale -d opale_restore`.
 
-## 5. Cascade IA — N2 (RTX 5080)
+## 5. IA : PC Windows ou cloud
 
-Sur la machine GPU :
-
-```bash
-# Ollama expose son API sur le réseau local :
-OLLAMA_HOST=0.0.0.0 ollama serve
-ollama pull llama3.1:8b        # ou un modèle plus costaud (qwen2.5:14b…)
-```
-
-Puis `OPALE_OLLAMA_URL=http://<ip-gpu>:11434` côté API. Vérification :
-l'app iOS → Assistant → menu ⋯ → « Homelab en ligne », et les réponses
-portent le badge « Homelab — privé ».
+Pour un PC Windows à domicile et Coolify distant, suivre [les deux configurations](COOLIFY.md#choisir-lia--pc-windows-ou-cloud). Ollama reste sur localhost et est relié à l’API par un réseau privé ; une adresse LAN du domicile n’est pas directement accessible au serveur distant. Les clés restent dans les secrets Coolify. L’app affiche séparément configuration, modèle disponible et autorisation du profil.
 
 ## 6. iOS en production
 

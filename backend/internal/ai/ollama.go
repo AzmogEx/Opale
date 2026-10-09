@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 type Ollama struct {
 	baseURL string
 	model   string
+	apiKey  string
 	client  *http.Client
 
 	// Sondage de disponibilité mis en cache (le routeur l'appelle à chaque
@@ -28,9 +30,13 @@ type Ollama struct {
 
 // NewOllama construit le provider N2. baseURL ex. « http://homelab:11434 ».
 func NewOllama(baseURL, model string) *Ollama {
+	return NewOllamaAuthenticated(baseURL, model, "")
+}
+func NewOllamaAuthenticated(baseURL, model, apiKey string) *Ollama {
 	return &Ollama{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		model:   model,
+		apiKey:  apiKey,
 		client:  &http.Client{Timeout: 90 * time.Second},
 	}
 }
@@ -54,29 +60,64 @@ func (o *Ollama) Available(ctx context.Context) bool {
 		o.lastHealthy = false
 		return false
 	}
+	o.authorise(req)
 	resp, err := o.client.Do(req)
 	if err != nil {
 		o.lastHealthy = false
 		return false
 	}
-	resp.Body.Close()
-	o.lastHealthy = resp.StatusCode == http.StatusOK
+	defer resp.Body.Close()
+	o.lastHealthy = false
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	var tags struct {
+		Models []struct {
+			Name  string `json:"name"`
+			Model string `json:"model"`
+		} `json:"models"`
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&tags) != nil {
+		return false
+	}
+	normalise := func(name string) string {
+		if !strings.Contains(name, ":") {
+			return name + ":latest"
+		}
+		return name
+	}
+	for _, model := range tags.Models {
+		if normalise(model.Name) == normalise(o.model) || normalise(model.Model) == normalise(o.model) {
+			o.lastHealthy = true
+			break
+		}
+	}
 	return o.lastHealthy
 }
 
 // Generate appelle POST /api/chat (réponse non streamée).
 func (o *Ollama) Generate(ctx context.Context, system, prompt string, maxTokens int) (string, error) {
-	body, err := json.Marshal(map[string]any{
-		"model":  o.model,
-		"stream": false,
+	payload := map[string]any{
+		"model":      o.model,
+		"stream":     false,
+		"format":     "json",
+		"keep_alive": "5m",
 		"messages": []map[string]string{
 			{"role": "system", "content": system},
 			{"role": "user", "content": prompt},
 		},
 		"options": map[string]any{
 			"num_predict": maxTokens,
+			"temperature": 0.2,
+			"num_ctx":     8192,
 		},
-	})
+	}
+	// Qwen3 supports disabling its reasoning stream, so the JSON token budget
+	// is used for the answer instead of being exhausted before any content.
+	if strings.HasPrefix(strings.ToLower(o.model), "qwen3") {
+		payload["think"] = false
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
 	}
@@ -86,6 +127,7 @@ func (o *Ollama) Generate(ctx context.Context, system, prompt string, maxTokens 
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	o.authorise(req)
 
 	resp, err := o.client.Do(req)
 	if err != nil {
@@ -101,7 +143,7 @@ func (o *Ollama) Generate(ctx context.Context, system, prompt string, maxTokens 
 			Content string `json:"content"`
 		} `json:"message"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
 		return "", err
 	}
 	text := strings.TrimSpace(out.Message.Content)
@@ -109,4 +151,10 @@ func (o *Ollama) Generate(ctx context.Context, system, prompt string, maxTokens 
 		return "", fmt.Errorf("ollama: réponse vide")
 	}
 	return text, nil
+}
+
+func (o *Ollama) authorise(req *http.Request) {
+	if o.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+o.apiKey)
+	}
 }
