@@ -44,6 +44,8 @@ struct ProjectionView: View {
                             }
                             assumptionsCard
                                 .cascadeIn(2)
+                            NavigationLink { VariableIncomesView() } label: { GlassCard { Label("Revenus variables et prévisions prudentes", systemImage: "waveform.path").frame(maxWidth: .infinity, alignment: .leading) } }
+                            NavigationLink { InvestmentExplorerView() } label: { GlassCard { Label("Explorer les investissements", systemImage: "globe.europe.africa").frame(maxWidth: .infinity, alignment: .leading) } }
                             GoalsSection()
                                 .cascadeIn(3)
                         }

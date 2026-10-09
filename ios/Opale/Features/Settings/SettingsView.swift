@@ -31,6 +31,9 @@ struct SettingsView: View {
 		NavigationStack {
 			Form {
                 Section("Outils") {
+                    NavigationLink { ContractsView() } label: { Label("Contrats et abonnements", systemImage: "doc.text") }
+                    NavigationLink { VariableIncomesView() } label: { Label("Revenus variables", systemImage: "waveform.path") }
+                    NavigationLink { InvestmentExplorerView() } label: { Label("Explorer les investissements", systemImage: "globe.europe.africa") }
                     NavigationLink { PilotToolsView() } label: { Label("Pilote automatique", systemImage: "sparkles") }
                     NavigationLink { PushSettingsView() } label: { Label("Notifications", systemImage: "bell") }
                 }

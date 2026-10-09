@@ -9,16 +9,20 @@ struct FinancialSetupPages: View {
     let accountsError: String?
     let titles: [String]
     let reloadAccounts: () -> Void
+    @State private var showPayslip = false
 
     var body: some View {
-        switch step {
+        Group { switch step {
         case 0: incomePage
         case 1: accountPage
         case 2: expensesPage
         case 3: subscriptionsPage
         case 4: goalPage
         default: reviewPage
-        }
+        } }
+        .sheet(isPresented: $showPayslip) { DocumentPrefillSheet(kind: .payslip, expectedCurrency: "EUR") { result in
+            draft.income.amount = MoneyFormat.input(result.amount, currency: "EUR")
+        } }
     }
 
     // MARK: - Revenus et compte
@@ -28,13 +32,15 @@ struct FinancialSetupPages: View {
             Toggle("J’ai un revenu mensuel régulier", isOn: $draft.income.enabled)
                 .accessibilityIdentifier("setup.income.enabled")
             if draft.income.enabled {
+                Button("Préremplir depuis une fiche de paie", systemImage: "doc.viewfinder") { showPayslip = true }
+                    .accessibilityIdentifier("setup.income.import")
                 moneyField("Salaire net reçu chaque mois (€)", value: $draft.income.amount, id: "setup.income.amount")
                 DatePicker("Prochain versement", selection: dateBinding($draft.income.nextDate), in: Date.now..., displayedComponents: .date)
                     .accessibilityIdentifier("setup.income.date")
                 Text("Indique le montant qui arrive réellement sur ton compte, après prélèvement à la source. Cette saisie crée une prévision mensuelle.")
                     .font(.caption).foregroundStyle(.secondary)
             } else {
-                Text("Tu pourras ajouter des revenus irréguliers ou d’autres rentrées d’argent dans Flux.")
+                Text("Tu pourras ajouter tes primes, missions et loyers dans Revenus variables, depuis Projection ou Réglages.")
                     .font(.subheadline).foregroundStyle(.secondary)
             }
         } header: { Text("Revenu mensuel") }

@@ -31,6 +31,16 @@ En développement natif : Go 1.26+, PostgreSQL17, Node22. `make db` démarre Pos
 
 Sur iPhone, les nouveaux profils disposent d’un formulaire en six étapes : revenu net, compte principal et solde facultatif, charges fixes, abonnements, budget variable et objectif, puis récapitulatif. Le brouillon se reprend dans **Réglages → Ma situation de départ**. La validation crée les échéances prévisionnelles et l’objectif sans inventer de transactions réalisées. Les profils déjà renseignés peuvent ouvrir ce parcours depuis les Réglages ; la démonstration en est exclue. Le budget variable sert uniquement à l’estimation initiale. Cette fonction nécessite les migrations backend `0022` et `0023`, appliquées automatiquement au démarrage de l’API après redéploiement.
 
+Sur iPhone, **Réglages → Contrats et abonnements** suit tarifs, essais, engagements, renouvellements et préavis. Les hausses du dernier débit comptabilisé sont proposées à confirmation sur le marchand, le compte et la devise choisis. L’historique des tarifs est conservé ; arrêter le suivi ne résilie pas le fournisseur. Les abonnements du formulaire initial sont repris sans créer une seconde prévision.
+
+**Revenus variables** (Projection ou Réglages) enregistre minimum, habituel et maximum, fréquence et compte. La prévision peut être désactivée, prudente ou habituelle ; un minimum nul ne crée aucun encaissement. Un libellé payeur/marchand permet le rapprochement avec les récurrences détectées sur ce compte. Sans libellé, vérifier les doublons au calendrier. Les séries liées se modifient depuis leur module ; les occurrences restent rapprochables avec les transactions bancaires.
+
+Le **préremplissage** lit une facture ou fiche de paie PDF/image depuis Fichiers, localement avec PDFKit/Vision, puis demande une vérification explicite. Limites : 10 Mo et cinq premières pages ; formats français à libellés reconnaissables, saisie manuelle possible en cas d’ambiguïté. Aucun document ni texte brut n’est envoyé ou persisté par ce parcours. Les dates passées ne deviennent pas de nouvelles échéances futures automatiquement.
+
+**Explorer les investissements** propose 19 pistes documentées, filtrées par risque indicatif, zone/pays, type, enveloppe, résidence et horizon, avec une liste locale à étudier. Les exemples couvrent épargne, obligations, ETF, actions, crypto et immobilier. Sources officielles consultées le 9 octobre 2026 ; aucun cours, rendement promis ou ordre de Bourse. Les règles fiscales hors de France ne sont pas modélisées.
+
+Contrats/revenus et leurs alertes nécessitent la migration backend **`0024`**, appliquée au démarrage après redéploiement Coolify. Les rappels existent dans l’app ; la réception push exige la configuration APNs et l’autorisation de notifications sur l’iPhone.
+
 Les intégrations banque, IA externe, cotations et APNs nécessitent configuration et recette avec leur fournisseur. Le code et ses tests ne prouvent pas la réception d’une notification sur appareil réel ou la synchronisation d’un compte bancaire réel. Les limites sont détaillées dans les documents de livraison.
 
 ## Données et confidentialité

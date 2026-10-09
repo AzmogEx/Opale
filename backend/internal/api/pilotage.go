@@ -127,12 +127,6 @@ func (s *Server) handleCashflow(w http.ResponseWriter, r *http.Request) {
 	for _, f := range flows {
 		keys = append(keys, f.MerchantKey)
 	}
-	manualKeys, err := s.store.CalendarMerchantKeys(r.Context(), p.ID)
-	if err != nil {
-		s.storeErr(w, err, "calendar keys")
-		return
-	}
-	keys = append(keys, manualKeys...)
 	daily, err := s.store.AvgDailyVariableSpend(r.Context(), p.ID, keys)
 	if err != nil {
 		s.storeErr(w, err, "cashflow: variable spend")
@@ -324,10 +318,12 @@ func (s *Server) handleDeleteGoal(w http.ResponseWriter, r *http.Request) {
 
 // alert — une alerte intelligente calculée à la volée.
 type alert struct {
-	Kind     string `json:"kind"`     // envelope_overrun | low_cash | goal_late
-	Severity string `json:"severity"` // warning | critical
-	Title    string `json:"title"`
-	Detail   string `json:"detail"`
+	ID         string `json:"id,omitempty"`
+	ContractID string `json:"contract_id,omitempty"`
+	Kind       string `json:"kind"`     // envelope_overrun | low_cash | goal_late
+	Severity   string `json:"severity"` // warning | critical
+	Title      string `json:"title"`
+	Detail     string `json:"detail"`
 }
 
 func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
@@ -356,12 +352,6 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 			for _, f := range flows {
 				keys = append(keys, f.MerchantKey)
 			}
-			manualKeys, err := s.store.CalendarMerchantKeys(r.Context(), p.ID)
-			if err != nil {
-				s.storeErr(w, err, "calendar alerts")
-				return
-			}
-			keys = append(keys, manualKeys...)
 			daily, err := s.store.AvgDailyVariableSpend(r.Context(), p.ID, keys)
 			if err != nil {
 				s.storeErr(w, err, "calendar alerts spending")
@@ -413,6 +403,14 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	contracts, err := s.store.ListFinancialContracts(r.Context(), p.ID)
+	if err != nil {
+		s.storeErr(w, err, "contract alerts")
+		return
+	}
+	for _, c := range store.FinancialContractAlerts(contracts, now) {
+		alerts = append(alerts, alert{ID: c.ID, ContractID: c.ContractID, Kind: c.Kind, Severity: c.Severity, Title: c.Title, Detail: c.Detail})
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"alerts": alerts})
 }
 

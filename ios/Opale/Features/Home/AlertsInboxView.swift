@@ -21,13 +21,16 @@ struct AlertsInboxView: View {
                             .font(.headline)
                         Text(alert.detail).font(.subheadline)
                     }.sensitive()
+                    if let id = alert.contractID {
+                        NavigationLink("Voir le contrat") { ContractDetailView(contractID: id) }
+                    }
                 }
                 ToolError(message: error)
                 Section { NavigationLink("Gérer mes seuils") { CustomAlertsView() } }
             }
             .navigationTitle("Alertes")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Fermer") { dismiss() } } }
-            .task { await load() }
+            .task(id: session.refreshID) { await load() }
             .refreshable { await load() }
         }
     }
@@ -40,6 +43,6 @@ struct AlertsInboxView: View {
             guard profile == session.profileKey, !Task.isCancelled else { return }
             alerts = fetched
             error = nil
-        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+        } catch { if !Task.isCancelled, profile == session.profileKey { self.error = error.localizedDescription } }
     }
 }

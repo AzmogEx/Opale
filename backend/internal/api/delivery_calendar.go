@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"github.com/go-chi/chi/v5"
 	"github.com/opale-app/opale/internal/engine"
 	"github.com/opale-app/opale/internal/money"
@@ -71,15 +72,23 @@ func (s *Server) handleSaveCalendar(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	created, e := s.store.SaveCalendarRule(r.Context(), profileFromContext(r.Context()).ID, c)
+	created, e := s.store.SaveUserCalendarRule(r.Context(), profileFromContext(r.Context()).ID, c)
 	if e != nil {
+		if errors.Is(e, store.ErrManagedCalendar) {
+			writeError(w, 409, "managed_calendar", "Modifie cette prévision depuis Contrats ou Revenus variables.")
+			return
+		}
 		s.storeErr(w, e, "save calendar")
 		return
 	}
 	writeJSON(w, 200, created)
 }
 func (s *Server) handleDeleteCalendar(w http.ResponseWriter, r *http.Request) {
-	if e := s.store.DeleteCalendarRule(r.Context(), profileFromContext(r.Context()).ID, chi.URLParam(r, "id")); e != nil {
+	if e := s.store.DeleteUserCalendarRule(r.Context(), profileFromContext(r.Context()).ID, chi.URLParam(r, "id")); e != nil {
+		if errors.Is(e, store.ErrManagedCalendar) {
+			writeError(w, 409, "managed_calendar", "Supprime ou désactive cette prévision depuis Contrats ou Revenus variables.")
+			return
+		}
 		s.storeErr(w, e, "delete calendar")
 		return
 	}

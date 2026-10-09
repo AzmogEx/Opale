@@ -97,8 +97,8 @@ func TestDeliveryCalendarPersistenceAndRealizations(t *testing.T) {
 	if len(occ) != 3 || occ[0].Status != "realized" || occ[1].Status != "excluded" || occ[2].Status != "planned" || occ[2].EUR != -10000 {
 		t.Fatalf("persisted calendar %+v", occ)
 	}
-	excluded, e := s.RecurringExcludedKeys(ctx, p.ID)
-	if e != nil || !excluded["rent"] {
+	excluded, e := s.CalendarMerchantKeys(ctx, p.ID)
+	if e != nil || len(excluded) != 1 || excluded[0] != "rent" {
 		t.Fatalf("manual recurring dedup %v %v", excluded, e)
 	}
 	if e = s.DeleteCalendarRule(ctx, p.ID, rule.ID); e != nil {

@@ -291,6 +291,9 @@ func (s *Store) CompleteOnboarding(ctx context.Context, profile string, expected
 					result.ExpenseRuleIDs = append(result.ExpenseRuleIDs, rule.ID)
 				} else {
 					result.SubscriptionRuleIDs = append(result.SubscriptionRuleIDs, rule.ID)
+					if e = st.TrackCalendarContract(ctx, profile, rule.ID); e != nil {
+						return e
+					}
 				}
 			}
 		}

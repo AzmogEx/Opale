@@ -10,6 +10,8 @@ struct CalendarRule: Codable, Identifiable {
     var end_date: String?
     var active: Bool
     var merchant_key: String
+    var managed_by: String?
+    var managed_id: String?
 }
 struct CalendarOccurrence: Codable, Identifiable {
     var rule_id: String
@@ -48,7 +50,15 @@ struct CalendarView: View {
                 }
                 Section("Séries & échéances ponctuelles") {
                     ForEach(data.rules) { rule in
-                        Button { editing = rule } label: { Label(rule.label + (rule.active ? "" : " · arrêtée"), systemImage: rule.frequency == "once" ? "calendar" : "repeat") }
+                        Group {
+                            if rule.managed_by == "contract", let id = rule.managed_id {
+                                NavigationLink { ContractDetailView(contractID: id) } label: { Label(rule.label + " · contrat", systemImage: "doc.text") }
+                            } else if rule.managed_by == "income" {
+                                NavigationLink { VariableIncomesView() } label: { Label(rule.label + " · revenu variable", systemImage: "waveform.path") }
+                            } else {
+                                Button { editing = rule } label: { Label(rule.label + (rule.active ? "" : " · arrêtée"), systemImage: rule.frequency == "once" ? "calendar" : "repeat") }
+                            }
+                        }.deleteDisabled(!(rule.managed_by ?? "").isEmpty)
                     }.onDelete { indices in Task { do { for i in indices { let _: APIClient.EmptyResponse = try await session.api.request("DELETE", "/v1/calendar/\(data.rules[i].id)") }; await load(); session.changed() } catch { self.error = error.localizedDescription } } }
                 }
             } else if error == nil { ProgressView() }

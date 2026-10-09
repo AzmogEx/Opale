@@ -271,7 +271,7 @@ func TestOnboardingCompleteConcurrentRetryAndNoRealizedFlows(t *testing.T) {
 			t.Fatal("different retry resources")
 		}
 	}
-	for table, want := range map[string]int{"assets": 1, "valuations": 1, "calendar_rules": 3, "goals": 1, "transactions": 0, "calendar_occurrences": 0} {
+	for table, want := range map[string]int{"assets": 1, "valuations": 1, "calendar_rules": 3, "goals": 1, "transactions": 0, "calendar_occurrences": 0, "financial_contracts": 1, "contract_prices": 1} {
 		var count int
 		if e := s.pool.QueryRow(ctx, "SELECT count(*) FROM "+table+" WHERE profile_id=$1", p.ID).Scan(&count); e != nil || count != want {
 			t.Fatalf("%s %d %v", table, count, e)

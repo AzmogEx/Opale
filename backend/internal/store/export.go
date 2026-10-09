@@ -49,7 +49,7 @@ func (s *Store) ExportZIP(ctx context.Context, profileID string, out io.Writer, 
 			{"bank_links", `SELECT to_jsonb(t)-'requisition_id' FROM bank_links t WHERE profile_id=$1 ORDER BY id`},
 		}
 		// Explicit allowlist: new tables are never silently exported with secrets.
-		for _, name := range []string{"bank_account_bindings", "profile_fx_history", "bank_accounts", "bank_pending", "envelopes", "merchant_rules", "goals", "contacts", "property_details", "object_details", "company_details", "monthly_snapshots", "allocation_targets", "custom_alerts", "imported_operations", "calendar_rules", "calendar_occurrences", "recurring_exclusions", "investment_flows", "investment_coverage", "beneficiaries"} {
+		for _, name := range []string{"financial_contracts", "contract_prices", "contract_price_dismissals", "variable_incomes", "bank_account_bindings", "profile_fx_history", "bank_accounts", "bank_pending", "envelopes", "merchant_rules", "goals", "contacts", "property_details", "object_details", "company_details", "monthly_snapshots", "allocation_targets", "custom_alerts", "imported_operations", "calendar_rules", "calendar_occurrences", "recurring_exclusions", "investment_flows", "investment_coverage", "beneficiaries"} {
 			var exists bool
 			if err = st.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 AND column_name='profile_id')`, name).Scan(&exists); err != nil {
 				return err

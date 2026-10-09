@@ -112,13 +112,21 @@ func (s *Store) EnvelopeStatuses(ctx context.Context, profileID string, year int
 
 // RecurringObservations renvoie les mouvements des 18 derniers mois utilisables
 // pour la détection de récurrence (EF-026).
+// A declaration owns only its account, merchant and direction. A prudent zero
+// or a disabled variable income must not be replaced by an optimistic detection.
+const managedObservationSQL = `
+ EXISTS(SELECT 1 FROM calendar_rules r WHERE r.profile_id=f.profile_id AND r.asset_id=f.asset_id AND r.merchant_key=f.merchant_key AND r.merchant_key<>'' AND r.active AND (r.ends_on IS NULL OR r.ends_on>=CURRENT_DATE) AND sign(r.amount_cents)=sign(f.amount_cents))
+ OR EXISTS(SELECT 1 FROM financial_contracts c WHERE c.profile_id=f.profile_id AND c.asset_id=f.asset_id AND c.merchant_key=f.merchant_key AND c.merchant_key<>'' AND f.amount_cents<0)
+ OR EXISTS(SELECT 1 FROM variable_incomes v WHERE v.profile_id=f.profile_id AND v.asset_id=f.asset_id AND v.merchant_key=f.merchant_key AND v.merchant_key<>'' AND f.amount_cents>0)`
+
 func (s *Store) RecurringObservations(ctx context.Context, profileID string) ([]engine.TxObs, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT merchant_key, label, occurred_on, eur_cents
-		FROM financial_transactions
-		WHERE profile_id = $1 AND merchant_key <> ''
-		  AND occurred_on >= CURRENT_DATE - interval '18 months' AND occurred_on<=CURRENT_DATE
-		ORDER BY occurred_on`, profileID)
+		SELECT f.merchant_key, f.label, f.occurred_on, f.eur_cents
+        FROM financial_transactions f
+        WHERE f.profile_id=$1 AND f.merchant_key<>''
+          AND f.occurred_on>=CURRENT_DATE-interval '18 months' AND f.occurred_on<=CURRENT_DATE
+          AND NOT (`+managedObservationSQL+`)
+        ORDER BY f.occurred_on`, profileID)
 	if err != nil {
 		return nil, fmt.Errorf("RecurringObservations: %w", err)
 	}
@@ -148,11 +156,11 @@ func (s *Store) CashBalance(ctx context.Context, profileID string) (money.Cents,
 func (s *Store) AvgDailyVariableSpend(ctx context.Context, profileID string, excludeKeys []string) (money.Cents, error) {
 	var total int64
 	err := s.pool.QueryRow(ctx, `
-		SELECT COALESCE(-SUM(eur_cents), 0)
-		FROM financial_transactions
-		WHERE profile_id = $1 AND amount_cents < 0
-		  AND occurred_on >= CURRENT_DATE - interval '90 days' AND occurred_on<=CURRENT_DATE
-		  AND NOT (merchant_key = ANY($2))`,
+		SELECT COALESCE(-SUM(f.eur_cents),0)
+        FROM financial_transactions f
+        WHERE f.profile_id=$1 AND f.amount_cents<0
+          AND f.occurred_on>=CURRENT_DATE-interval '90 days' AND f.occurred_on<=CURRENT_DATE
+          AND NOT (f.merchant_key=ANY($2)) AND NOT (`+managedObservationSQL+`)`,
 		profileID, excludeKeys,
 	).Scan(&total)
 	if err != nil {

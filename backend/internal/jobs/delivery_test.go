@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestPushPrivacyAndPersistentDeduplication(t *testing.T) {
@@ -44,6 +45,10 @@ func TestPushPrivacyAndPersistentDeduplication(t *testing.T) {
 		t.Fatal(e)
 	}
 	_ = alert
+	_, e = st.SaveFinancialContract(ctx, p.ID, store.FinancialContract{ID: "7aa9bcd3-17a4-4f03-8151-d7ba1acbe684", Name: "Hidden Provider", Category: "subscription", Amount: 1299, Currency: "EUR", Frequency: "monthly", NextDueDate: time.Now().AddDate(0, 0, 2).Format("2006-01-02"), Active: true, ReminderDays: 7, TrialEnd: time.Now().AddDate(0, 0, 2).Format("2006-01-02")})
+	if e != nil {
+		t.Fatal(e)
+	}
 	token := strings.Repeat("a", 64)
 	if e = st.UpsertPushToken(ctx, p.ID, token, "ios"); e != nil {
 		t.Fatal(e)
@@ -55,7 +60,7 @@ func TestPushPrivacyAndPersistentDeduplication(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		calls++
-		if strings.Contains(string(b), "123456789") || strings.Contains(string(b), p.Name) {
+		if strings.Contains(string(b), "123456789") || strings.Contains(string(b), p.Name) || strings.Contains(string(b), "Hidden Provider") || strings.Contains(string(b), "1299") {
 			t.Error("sensitive push payload")
 		}
 		var payload map[string]any
@@ -80,7 +85,7 @@ func TestPushPrivacyAndPersistentDeduplication(t *testing.T) {
 	again.PushTriggeredAlerts(ctx)
 	mu.Lock()
 	defer mu.Unlock()
-	if calls != 1 {
-		t.Fatalf("expected1 delivery got%d", calls)
+	if calls != 2 {
+		t.Fatalf("expected one custom and one contract delivery, got%d", calls)
 	}
 }

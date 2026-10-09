@@ -8,6 +8,8 @@ import (
 )
 
 type CalendarRule struct {
+	ManagedBy   string      `json:"managed_by,omitempty"`
+	ManagedID   string      `json:"managed_id,omitempty"`
 	ID          string      `json:"id"`
 	AssetID     string      `json:"asset_id"`
 	Label       string      `json:"label"`
@@ -31,7 +33,12 @@ type CalendarOccurrence struct {
 }
 
 func (s *Store) ListCalendarRules(ctx context.Context, profile string) ([]CalendarRule, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id,asset_id,label,amount_cents,starts_on::text,frequency,ends_on::text,active,merchant_key FROM calendar_rules WHERE profile_id=$1 ORDER BY starts_on,id`, profile)
+	rows, err := s.pool.Query(ctx, `SELECT r.id,r.asset_id,r.label,r.amount_cents,r.starts_on::text,r.frequency,r.ends_on::text,r.active,r.merchant_key,
+ CASE WHEN c.id IS NOT NULL THEN 'contract' WHEN v.id IS NOT NULL THEN 'income' ELSE '' END,
+ COALESCE(c.id::text,v.id::text,'') FROM calendar_rules r
+ LEFT JOIN financial_contracts c ON c.profile_id=r.profile_id AND c.calendar_rule_id=r.id
+ LEFT JOIN variable_incomes v ON v.profile_id=r.profile_id AND v.calendar_rule_id=r.id
+ WHERE r.profile_id=$1 ORDER BY r.starts_on,r.id`, profile)
 	if err != nil {
 		return nil, err
 	}
@@ -39,7 +46,7 @@ func (s *Store) ListCalendarRules(ctx context.Context, profile string) ([]Calend
 	out := []CalendarRule{}
 	for rows.Next() {
 		var c CalendarRule
-		if err = rows.Scan(&c.ID, &c.AssetID, &c.Label, &c.Amount, &c.Date, &c.Frequency, &c.EndDate, &c.Active, &c.MerchantKey); err != nil {
+		if err = rows.Scan(&c.ID, &c.AssetID, &c.Label, &c.Amount, &c.Date, &c.Frequency, &c.EndDate, &c.Active, &c.MerchantKey, &c.ManagedBy, &c.ManagedID); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -170,7 +177,7 @@ func (s *Store) SetCalendarOccurrence(ctx context.Context, profile, rule, date, 
 }
 
 func (s *Store) CalendarMerchantKeys(ctx context.Context, profile string) ([]string, error) {
-	rows, e := s.pool.Query(ctx, `SELECT DISTINCT merchant_key FROM calendar_rules WHERE profile_id=$1 AND active AND merchant_key<>''`, profile)
+	rows, e := s.pool.Query(ctx, `SELECT DISTINCT merchant_key FROM calendar_rules WHERE profile_id=$1 AND active AND (ends_on IS NULL OR ends_on>=CURRENT_DATE) AND merchant_key<>''`, profile)
 	if e != nil {
 		return nil, e
 	}
@@ -186,7 +193,7 @@ func (s *Store) CalendarMerchantKeys(ctx context.Context, profile string) ([]str
 	return keys, rows.Err()
 }
 func (s *Store) RecurringExcludedKeys(ctx context.Context, profile string) (map[string]bool, error) {
-	rows, err := s.pool.Query(ctx, `SELECT merchant_key FROM recurring_exclusions WHERE profile_id=$1 UNION SELECT merchant_key FROM calendar_rules WHERE profile_id=$1 AND active AND merchant_key<>''`, profile)
+	rows, err := s.pool.Query(ctx, `SELECT merchant_key FROM recurring_exclusions WHERE profile_id=$1`, profile)
 	if err != nil {
 		return nil, err
 	}

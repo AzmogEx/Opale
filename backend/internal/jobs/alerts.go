@@ -80,6 +80,7 @@ func (r *Runner) PushTriggeredAlerts(ctx context.Context) {
 	if r.Push == nil {
 		return
 	}
+	r.pushContractAlerts(ctx)
 	profiles, err := r.Store.ListProfiles(ctx)
 	if err != nil {
 		return

@@ -1,6 +1,6 @@
 # Opale — Modèle de données
 
-État livré le 8 octobre 2026, migrations `0001` à `0021`. Le schéma exact et ses contraintes sont définis dans `backend/internal/migrations/`. Les conventions de calcul sont détaillées dans [CONVENTIONS-FINANCIERES.md](CONVENTIONS-FINANCIERES.md), les validations dans [LIVRAISON.md](LIVRAISON.md).
+État livré le 9 octobre 2026, migrations `0001` à `0024`. Le schéma exact et ses contraintes sont définis dans `backend/internal/migrations/`. Les conventions de calcul sont détaillées dans [CONVENTIONS-FINANCIERES.md](CONVENTIONS-FINANCIERES.md), les validations dans [LIVRAISON.md](LIVRAISON.md).
 
 Les montants monétaires sont des `BIGINT` en **unités mineures de la devise native** : EUR deux décimales, JPY zéro, KWD trois. Le nom historique `*_cents` ne signifie donc pas systématiquement centimes EUR. `currency_exponent` et le type Go `money.Cents` contrôlent conversions, arrondis et débordements. Les taux de change et quantités utilisent leurs précisions explicites ; aucun taux manquant n’est remplacé par une parité implicite.
 
@@ -13,6 +13,10 @@ Les montants monétaires sont des `BIGINT` en **unités mineures de la devise na
 | `transactions`, `categories`, `merchant_rules` | Compte, montant natif, date civile, libellés actuel/brut, catégorie et règle apprise ; type de flux, état bancaire, virement lié et dette remboursée explicites |
 | `imported_operations` | Identité durable d’une opération source, indépendante des lignes visibles après ventilation ou suppression |
 | `envelopes`, `goals` | Budgets par catégorie et objectifs avec rythme d’épargne affecté ; allocations sérialisées et plafonnées à la capacité observée |
+| `profile_onboarding` | Brouillon/reprise, révision et résultat atomique de la configuration initiale, isolés par profil |
+| `financial_contracts`, `contract_prices`, `contract_price_dismissals` | Suivi des engagements, compte/marchand explicites, tarifs historisés et observation de hausse confirmée ou ignorée |
+| `variable_incomes` | Fourchette native minimum/habituel/maximum et choix explicite de prévision ; règle calendrier liée facultative |
+| `contract_push_deliveries` | Déduplication durable par contrat/événement/appareil, sans contenu financier dans le payload ; exclue de l’export |
 | `calendar_rules`, `calendar_occurrences`, `recurring_exclusions` | Échéance ponctuelle ou série hebdomadaire/mensuelle/trimestrielle/annuelle, modification d’occurrence, exclusion et lien vers la transaction réalisée |
 | `property_details`, `object_details`, `company_details` | Informations spécialisées d’un actif ; bien/crédit et société/CCA liés explicitement au même propriétaire |
 | `investment_flows`, `investment_coverage` | Apports, retraits, distributions, frais externes et confirmation de couverture nécessaires à une performance interprétable |
@@ -41,3 +45,5 @@ Les lectures/écritures sont filtrées par le profil issu de la session. Les cl�
 La création avec valeur initiale, les virements et leurs frais, la ventilation, les imports et les mutations liées sont transactionnels. Les imports gardent leur identité durable après ventilation ; un changement fournisseur incompatible est refusé, sans recréation silencieuse. L’export utilise un instantané SQL cohérent, une liste explicite de tables et un manifeste final. Il exclut PIN, sessions et jetons secrets ; voir [le contrat d’export](CONVENTIONS-FINANCIERES.md#export).
 
 Les migrations sont sérialisées et appliquées dans une transaction. Une incohérence historique de propriétaire ou d’échelle monétaire bloque la migration sans suppression ni réattribution automatique. Le retour arrière de `0021` refuse les règles trimestrielles existantes ; pour les migrations destructrices, la récupération passe par une sauvegarde restaurée dans une nouvelle base, selon [EXPLOITATION.md](EXPLOITATION.md).
+
+La migration `0024` reprend les abonnements déclarés par un onboarding terminé en réutilisant leurs règles. Les modifications d’un tarif ou d’une hypothèse clôturent la série précédente et créent sa suite sans réécrire les paiements. Les révisions concurrentes sont refusées. La confirmation d’une hausse issue d’un prélèvement le jour de l’échéance rapproche ce mouvement, ou exclut la nouvelle occurrence s’il est déjà rapproché, pour éviter un double comptage. Contrats, prix, observations ignorées et revenus font partie de l’export privé et de la réinitialisation. Le retour arrière refuse la présence de contrats/revenus.

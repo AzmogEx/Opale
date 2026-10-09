@@ -13,6 +13,7 @@ struct InvestmentsView: View {
 
     var body: some View {
         List {
+            Section { NavigationLink { InvestmentExplorerView() } label: { Label("Explorer selon le risque et le pays", systemImage: "globe.europe.africa") } }
             if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
             if loaded && investments.isEmpty {
                 ContentUnavailableView(

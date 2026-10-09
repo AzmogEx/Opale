@@ -10,8 +10,7 @@ struct SubscriptionsView: View {
 	@Environment(SessionStore.self) private var session
 
 	@State private var subscriptions: [SubscriptionStatus] = []
-	@State private var declaredSubscriptions: [CalendarRule] = []
-	@State private var declaredCurrencies: [String: String] = [:]
+	@State private var declaredSubscriptions: [FinancialContract] = []
 	@State private var totalMonthly: Cents = .zero
 	@State private var totalYearly: Cents = .zero
 	@State private var loaded = false
@@ -24,6 +23,9 @@ struct SubscriptionsView: View {
 			ScrollView {
 				GlassEffectContainer(spacing: 16) {
 					VStack(spacing: 16) {
+                            NavigationLink { ContractsView() } label: {
+                                GlassCard { Label("Contrats, rappels et hausses de prix", systemImage: "doc.text.magnifyingglass").frame(maxWidth: .infinity, alignment: .leading) }
+                            }
 						if loaded && subscriptions.isEmpty && declaredSubscriptions.isEmpty && errorMessage == nil {
 							EmptyStateView(
 								icon: "repeat.circle",
@@ -67,36 +69,24 @@ struct SubscriptionsView: View {
     private var declaredSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Abonnements déclarés").font(.headline)
-            Text("Saisis pendant la configuration. Les montants et dates ci-dessous suivent les séries actuelles du calendrier.")
+            Text("Tarifs actuels de tes contrats, saisis ou confirmés. Ne les additionne pas aux mêmes abonnements détectés ci-dessous.")
                 .font(.caption).foregroundStyle(.secondary)
-            ForEach(declaredSubscriptions) { rule in
-                GlassCard {
-                    VStack(alignment: .leading, spacing: 6) {
+            ForEach(declaredSubscriptions) { contract in
+                NavigationLink { ContractDetailView(contractID: contract.id) } label: {
+                    GlassCard {
                         HStack(alignment: .firstTextBaseline) {
-                            Text(rule.label).font(.body.weight(.medium))
-                            Spacer()
-                            if let currency = declaredCurrencies[rule.asset_id] {
-                                AmountText(cents: rule.amount_cents, style: .full, currency: currency)
-                                    .font(.callout.weight(.semibold))
-                            } else {
-                                Text("Devise indisponible").font(.caption).foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(contract.name).font(.body.weight(.medium))
+                                Text(contract.active ? "\(periodicityLabel(contract.frequency)) · \(FinancialTools.dayLabel(contract.nextDueDate))" : "Contrat arrêté")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                if contract.pendingPrice != nil { Label("Hausse à vérifier", systemImage: "arrow.up.right").font(.caption).foregroundStyle(.orange) }
                             }
-                        }
-                        Text("\(periodicityLabel(rule.frequency)) · depuis le \(Date.fromOpaleDay(rule.date)?.opaleFormatted(.dateTime.day().month(.wide).year()) ?? rule.date)")
-                            .font(.caption).foregroundStyle(.secondary)
-                        if !rule.active {
-                            Label("Série arrêtée", systemImage: "pause.circle")
-                                .font(.caption).foregroundStyle(.secondary)
-                        } else if let end = rule.end_date {
-                            Text("Fin le \(Date.fromOpaleDay(end)?.opaleFormatted(.dateTime.day().month(.wide).year()) ?? end)")
-                                .font(.caption).foregroundStyle(.secondary)
+                            Spacer()
+                            AmountText(cents: contract.amount, currency: contract.currency).font(.callout.weight(.semibold))
                         }
                     }
-                }
+                }.buttonStyle(.plain)
             }
-            NavigationLink { CalendarView() } label: {
-                Label("Modifier dans le calendrier", systemImage: "calendar")
-            }.font(.subheadline)
         }
     }
 
@@ -227,27 +217,14 @@ struct SubscriptionsView: View {
 			failures.append(error.localizedDescription)
 		}
         do {
-            let setup = try await api.fetchFinancialSetup()
+            let response = try await api.contracts()
             guard !Task.isCancelled, session.profileKey == profileKey else { return }
-            let ids = Set(setup.result?.subscriptionRuleIDs ?? [])
-            if ids.isEmpty {
-                declaredSubscriptions = []
-                declaredCurrencies = [:]
-            } else {
-                async let assetsRequest = api.listAssets()
-                let calendar: CalendarData = try await api.request("GET", "/v1/calendar")
-                let assets = try await assetsRequest
-                guard !Task.isCancelled, session.profileKey == profileKey else { return }
-                declaredSubscriptions = calendar.rules.filter { ids.contains($0.id) }
-                declaredCurrencies = Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0.currency) })
-            }
+            declaredSubscriptions = response.contracts.filter { $0.category == "subscription" }
         } catch APIError.badStatus(404, _) {
-            // Les serveurs antérieurs au parcours initial restent utilisables.
             declaredSubscriptions = []
-            declaredCurrencies = [:]
         } catch {
             guard !Task.isCancelled, session.profileKey == profileKey else { return }
-            failures.append("Abonnements déclarés : \(error.localizedDescription)")
+            failures.append("Contrats déclarés : \(error.localizedDescription)")
         }
 		errorMessage = failures.isEmpty ? nil : failures.joined(separator: "\n")
 		loaded = true

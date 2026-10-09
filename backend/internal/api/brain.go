@@ -118,11 +118,6 @@ func (s *Server) buildTwinSnapshot(r *http.Request, profileID string) (twin.Snap
 	}
 
 	// Cash projeté à 30 jours (pour le radar).
-	manualKeys, err := s.store.CalendarMerchantKeys(ctx, profileID)
-	if err != nil {
-		return twin.Snapshot{}, err
-	}
-	keys = append(keys, manualKeys...)
 	daily, err := s.store.AvgDailyVariableSpend(ctx, profileID, keys)
 	if err != nil {
 		return twin.Snapshot{}, err

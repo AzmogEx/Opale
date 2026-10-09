@@ -430,7 +430,13 @@ struct OpaleAlert: Codable, Hashable, Identifiable, Sendable {
     var title: String
     var detail: String
 
-    var id: String { kind + title }
+    var identifier: String?
+    var contractID: String?
+    var id: String { identifier ?? (kind + title + detail) }
+    enum CodingKeys: String, CodingKey {
+        case kind, severity, title, detail
+        case identifier = "id", contractID = "contract_id"
+    }
 }
 
 // MARK: - Le cerveau (P5)
