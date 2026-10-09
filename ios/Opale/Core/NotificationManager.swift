@@ -40,8 +40,9 @@ nonisolated enum NotificationManager {
         nonisolated(unsafe) let task = task
         let work = Task {
             defer { task.setTaskCompleted(success: true) }
-            let base = UserDefaults.standard.string(forKey: "opale.baseURL") ?? "http://localhost:8080"
-            guard let url = URL(string: base), let token = Keychain.sessionToken(forServer: base) else { return }
+            let url = AppBackend.url
+            let base = url.absoluteString
+            guard let token = Keychain.sessionToken(forServer: base) else { return }
             let api = await MainActor.run { APIClient(baseURL: url) { token } }
             guard let profile = try? await api.me(),
                   UserDefaults.standard.integer(forKey: "profile.\(base)|\(profile.id).push.enabled") == 1,

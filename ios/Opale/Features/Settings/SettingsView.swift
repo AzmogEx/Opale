@@ -257,7 +257,7 @@ struct SettingsView: View {
 		} header: {
 			Text("Serveur")
 		} footer: {
-			Text("L'adresse se change depuis l'écran de connexion (déconnecte-toi d'abord).")
+			Text("Opale se connecte automatiquement au service sécurisé Vaycode.")
 		}
 	}
 
@@ -266,7 +266,7 @@ struct SettingsView: View {
 			LabeledContent("Version",
 			               value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—")
 			LabeledContent("Philosophie", value: "Beau · Intelligent · Privé")
-			Text("Le moteur calcule, l'IA explique. Tes données restent chez toi.")
+			Text("Le moteur calcule, l'IA explique. Tes données sont hébergées sur le service Opale de Vaycode.")
 				.font(.caption)
 				.foregroundStyle(.secondary)
 		}

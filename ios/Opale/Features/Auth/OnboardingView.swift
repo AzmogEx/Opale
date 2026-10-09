@@ -25,7 +25,7 @@ struct OnboardingView: View {
 					pageView(
 						icon: "lock.shield.fill",
 						title: "Privé,\npar construction",
-						message: "Tes données vivent chez toi (ton serveur). L'IA tourne d'abord sur ton iPhone, puis sur ton homelab — le cloud reçoit uniquement des agrégats minimisés et arrondis avec ton accord. Ces montants restent sensibles."
+						message: "Tes données sont hébergées sur le service Opale de Vaycode. La lecture des factures reste sur ton iPhone. L’assistant utilise le serveur Opale ; le cloud reçoit uniquement des agrégats minimisés et arrondis avec ton accord. Ces montants restent sensibles."
 					)
 					.tag(1)
 

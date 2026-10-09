@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 // Creates and deletes only its own profile on the disposable integration API.
 test('real API: transfer, goals, vault, fiscal source and module rendering', async ({
 	page,

@@ -11,6 +11,7 @@
 	let initial = $state<any>({});
 	let error = $state('');
 	let refresh = $state(0);
+	let loadingDetails = $state(false);
 	const path = $derived(
 		kind === 'property'
 			? '/v1/real-estate'
@@ -94,23 +95,24 @@
 		const id = selected;
 		const k = kind;
 		initial = {};
-		if (id && k === 'quote')
-			void session.api
-				.request<any>('GET', `/v1/assets/${id}/quote`)
-				.then((r) => {
-					if (selected === id) initial = r;
-				})
-				.catch((e) => (error = messageOf(e)));
-		if (id && k !== 'quote')
-			void session.api
-				.request<any>('GET', path)
-				.then((r) => {
-					if (selected === id) {
-						const list = r.properties ?? r.objects ?? r.companies ?? [];
-						initial = list.find((x: any) => x.asset.id === id)?.details ?? {};
-					}
-				})
-				.catch((e) => (error = messageOf(e)));
+		loadingDetails = Boolean(id);
+		if (!id) return;
+		error = '';
+		let active = true;
+		void session.api
+			.request<any>('GET', k === 'quote' ? `/v1/assets/${id}/quote` : path)
+			.then((r) => {
+				if (!active) return;
+				const list = r.properties ?? r.objects ?? r.companies ?? [];
+				initial = k === 'quote' ? r : (list.find((x: any) => x.asset.id === id)?.details ?? {});
+				loadingDetails = false;
+			})
+			.catch((e) => {
+				if (active) error = messageOf(e);
+			});
+		return () => {
+			active = false;
+		};
 	});
 	async function save(v: Record<string, any>) {
 		await session.api.request('PUT', `/v1/assets/${selected}/${kind}`, v);
@@ -135,7 +137,11 @@
 					value={a.id}>{a.name}</option
 				>{/each}</select
 		></label
-	>{#if selected}<Form {fields} {initial} submit={save} />{:else}<p class="muted">
+	>{#if selected && loadingDetails}<p role="status">
+			{error ? 'Informations indisponibles.' : 'Chargement des informations…'}
+		</p>
+		{#if error}<button onclick={() => refresh++}>Réessayer</button>{/if}
+	{:else if selected}<Form {fields} {initial} submit={save} />{:else}<p class="muted">
 			Crée d’abord l’actif du bon type dans l’onglet Actifs.
 		</p>{/if}{#if kind === 'quote'}<p class="muted">
 			Fournisseur : {initial.source ?? 'CoinGecko'} · Dernière valeur : {initial.as_of ?? 'aucune'}

@@ -34,7 +34,6 @@ struct ProfileGateView: View {
                     } actions: {
                         Button("Réessayer") { Task { await load() } }
                             .buttonStyle(.borderedProminent)
-                        serverField
                     }
                 case .loaded(let profiles):
                     profileList(profiles)
@@ -112,7 +111,6 @@ struct ProfileGateView: View {
             }
 
             Section {
-                serverField
                 Button("Actualiser les profils") { Task { await load() } }
                 Button(loadingDemo ? "Préparation…" : "Essayer la démonstration") {
                     Task { loadingDemo = true; defer { loadingDemo = false }; do { try await session.startDemo() } catch { demoError = error.localizedDescription } }
@@ -126,16 +124,6 @@ struct ProfileGateView: View {
             }
         }
         .refreshable { await load() }
-    }
-
-    private var serverField: some View {
-        @Bindable var session = session
-        return TextField("URL du serveur", text: $session.baseURLString)
-            .textFieldStyle(.roundedBorder)
-            .keyboardType(.URL)
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
-            .padding(.horizontal)
     }
 
     private func load() async {

@@ -1,5 +1,7 @@
 # Livraison Opale — matrice de référence
 
+> Compte rendu daté : les résultats ci-dessous restent ceux de leur recette. Le comportement actuel et la politique Vaycode sont décrits dans [le catalogue fonctionnel](README.md) ; les fonctions nouvelles peuvent être postérieures à cette matrice.
+
 Mise à jour du 8 octobre 2026. Périmètre : cahier des charges, six défauts prioritaires, gestion quotidienne sur les deux clients, domaines approfondis, P8 et exploitation. Le dépôt existant et ses modifications locales ont été conservés ; aucun reset ni commit automatique. Le relevé initial est dans `/tmp/opale-delivery-baseline-20261008`.
 
 ## État final et reprise

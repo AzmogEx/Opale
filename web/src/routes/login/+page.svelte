@@ -12,8 +12,6 @@
 	let error = $state('');
 	let busy = $state(false);
 	let loading = $state(true);
-	let serverVisible = $state(false);
-	let serverInput = $state(session.baseURL);
 	async function load() {
 		loading = true;
 		try {
@@ -46,16 +44,6 @@
 			pin = '';
 		} finally {
 			busy = false;
-		}
-	}
-	async function applyServer() {
-		try {
-			session.setBaseURL(serverInput);
-			selected = null;
-			serverVisible = false;
-			await load();
-		} catch (e) {
-			error = messageOf(e);
 		}
 	}
 	async function demo() {
@@ -146,15 +134,5 @@
 					disabled={busy}>Découvrir avec une démo</button
 				><button onclick={load} disabled={loading}>Réessayer</button>
 			</div>{/if}
-		<details class="server-settings" bind:open={serverVisible}>
-			<summary>Serveur : {session.baseURL || 'même origine'}</summary><label
-				>Adresse du serveur<input
-					type="url"
-					bind:value={serverInput}
-					placeholder="https://opale.exemple.fr"
-				/></label
-			><button onclick={applyServer}>Utiliser ce serveur</button>
-			<p class="muted">Laisse vide pour utiliser l’adresse de cette application.</p>
-		</details>
 	</div>
 </div>

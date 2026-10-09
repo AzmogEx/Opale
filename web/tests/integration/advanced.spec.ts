@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 test('real API: calendar, decisions, investment flows, CCA, emergency revocation and alerts', async ({
 	page,
 	request

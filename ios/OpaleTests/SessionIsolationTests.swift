@@ -32,7 +32,6 @@ final class SessionIsolationTests: XCTestCase {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [SessionProtocol.self]
         let session = SessionStore(networkSession: URLSession(configuration: config), clearCachedData: {})
-        session.baseURLString = "https://isolated.invalid"
         XCTAssertTrue(Keychain.set("synthetic-token", forKey: "session.token"))
         let profile = Profile(id: "synthetic-a", name: "Synthetic A", privacyDefault: "N1")
         struct Saved: Encodable { let server: String; let profile: Profile }
@@ -60,7 +59,9 @@ final class SessionIsolationTests: XCTestCase {
     }
     @MainActor func testCacheFromAnotherServerIsNotRestored() async throws {
         try await isolated { session in
-            session.baseURLString = "https://other.invalid"
+            struct Saved: Encodable { let server: String; let profile: Profile }
+            let data = try JSONEncoder().encode(Saved(server: "https://other.invalid", profile: Profile(id: "synthetic-a", name: "Synthetic A", privacyDefault: "N1")))
+            Keychain.set(String(decoding: data, as: UTF8.self), forKey: "session.profile")
             SessionProtocol.handler = { _ in throw URLError(.timedOut) }
             await session.bootstrap()
             XCTAssertEqual(session.profileID, "anonyme")
@@ -89,6 +90,33 @@ final class SessionIsolationTests: XCTestCase {
             XCTAssertNil(Keychain.get("session.profile"))
         }
     }
+
+    @MainActor func testLegacyServerPreferenceCannotRedirectRequests() async throws {
+        try await isolated { _ in
+            UserDefaults.standard.set("https://other.invalid", forKey: "opale.baseURL")
+            let config = URLSessionConfiguration.ephemeral
+            config.protocolClasses = [SessionProtocol.self]
+            let fixed = SessionStore(networkSession: URLSession(configuration: config), clearCachedData: {})
+            XCTAssertEqual(fixed.baseURLString, "https://opale.vaycode.com")
+            XCTAssertNil(UserDefaults.standard.object(forKey: "opale.baseURL"))
+            SessionProtocol.handler = { request in
+                XCTAssertEqual(request.url?.host, "opale.vaycode.com")
+                XCTAssertEqual(request.url?.scheme, "https")
+                return (204, Data())
+            }
+            let _: APIClient.EmptyResponse = try await fixed.api.request("GET", "/v1/public", authenticated: false)
+            let _: APIClient.EmptyResponse = try await fixed.api.request("GET", "/v1/private")
+        }
+    }
+
+    #if DEBUG && targetEnvironment(simulator)
+    func testSimulatorOverrideOnlyAcceptsLoopbackTestServer() {
+        XCTAssertEqual(AppBackend.simulatorTestURL(arguments: ["Opale", "--base-url", "http://localhost:58088"])?.host, "localhost")
+        for address in ["https://other.invalid", "http://other.invalid:58088", "http://localhost.evil.invalid:58088", "http://user:secret@localhost:58088", "http://localhost:58088/path", "http://localhost:58088?target=other", "http://localhost:58088#other"] {
+            XCTAssertNil(AppBackend.simulatorTestURL(arguments: ["Opale", "--base-url", address]))
+        }
+    }
+    #endif
     @MainActor func testClientCapturesOriginalTokenAcrossProfileChange() async throws {
         try await isolated { session in
             let clientA = session.api

@@ -1,5 +1,7 @@
 # Livraison des domaines backend
 
+> Compte rendu daté : les résultats ci-dessous restent ceux de leur recette. Le comportement actuel et la politique Vaycode sont décrits dans [le catalogue fonctionnel](README.md) ; les fonctions nouvelles peuvent être postérieures à cette matrice.
+
 État du 8 octobre 2026. Ce document couvre les domaines délégués ; la recette globale et les interfaces sont suivies dans `docs/LIVRAISON.md`. Aucune connexion à des comptes bancaires réels n’a été effectuée. Les migrations ont été exécutées sur PostgreSQL 17 avec des profils exclusivement synthétiques.
 
 ## Fonctionnalités livrées

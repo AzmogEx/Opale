@@ -4,7 +4,7 @@ import { API, type Profile } from './api';
 class Session {
 	token = $state<string | null>(null);
 	profile = $state<Profile | null>(null);
-	baseURL = $state('');
+	readonly baseURL = 'https://opale.vaycode.com';
 	expiresAt = $state('');
 	locked = $state(true);
 	discreet = $state(false);
@@ -23,7 +23,11 @@ class Session {
 				this.token = sessionStorage.getItem('opale.token');
 				this.profile = JSON.parse(sessionStorage.getItem('opale.profile') || 'null');
 				this.expiresAt = sessionStorage.getItem('opale.expires') || '';
-				this.baseURL = localStorage.getItem('opale.baseURL') || '';
+				const legacyServer = localStorage.getItem('opale.baseURL')?.replace(/\/+$/, '');
+				const boundServer =
+					sessionStorage.getItem('opale.server') || legacyServer || location.origin;
+				if (boundServer !== this.baseURL) this.clear();
+				localStorage.removeItem('opale.baseURL');
 				// Retire the older indefinitely persisted bearer token.
 				localStorage.removeItem('opale.token');
 				localStorage.removeItem('opale.profile');
@@ -55,18 +59,6 @@ class Session {
 	savePreference(key: string, value: string) {
 		localStorage.setItem(this.preferenceKey(key), value);
 	}
-	setBaseURL(url: string) {
-		const trimmed = url.trim().replace(/\/+$/, '');
-		if (trimmed) {
-			const parsed = new URL(trimmed);
-			if (!['https:', 'http:'].includes(parsed.protocol))
-				throw new Error('Adresse HTTP ou HTTPS requise.');
-		}
-		this.clear();
-		this.baseURL = trimmed;
-		localStorage.setItem('opale.baseURL', trimmed);
-		this.api = this.client();
-	}
 	lock() {
 		this.locked = true;
 		this.generation++;
@@ -84,7 +76,7 @@ class Session {
 		this.locked = true;
 		this.generation++;
 		if (typeof sessionStorage !== 'undefined')
-			['opale.token', 'opale.profile', 'opale.expires'].forEach((k) =>
+			['opale.token', 'opale.profile', 'opale.expires', 'opale.server'].forEach((k) =>
 				sessionStorage.removeItem(k)
 			);
 	}
@@ -105,6 +97,7 @@ class Session {
 		sessionStorage.setItem('opale.token', res.token);
 		sessionStorage.setItem('opale.profile', JSON.stringify(res.profile));
 		sessionStorage.setItem('opale.expires', res.expires_at);
+		sessionStorage.setItem('opale.server', this.baseURL);
 		this.theme = this.readPreference('theme', 'system');
 		this.accent = this.readPreference('accent', 'opal');
 		this.discreet = this.readPreference('discreet', 'false') === 'true';

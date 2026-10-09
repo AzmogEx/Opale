@@ -2,6 +2,8 @@
 
 Le dépôt fournit une pile API Go + PostgreSQL + web nginx. Coolify construit les deux images et termine HTTPS. Configuration fondée sur la [documentation Compose](https://coolify.io/docs/applications/builds/docker-compose) et les [domaines Coolify](https://coolify.io/docs/core/networking/domains).
 
+Le backend des clients est imposé sur **https://opale.vaycode.com** ; aucun champ de serveur dans l’app. Un push sur `main` déclenche automatiquement le déploiement. Les fournisseurs IA sont joints par l’API Vaycode, sans changer cette destination.
+
 ## Configuration
 
 1. Créer une application depuis le dépôt Git public `https://github.com/AzmogEx/Opale`, branche `main`, avec le build pack **Docker Compose**.

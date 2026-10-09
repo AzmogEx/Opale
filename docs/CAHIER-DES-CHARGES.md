@@ -1,5 +1,7 @@
 # Opale — Cahier des charges
 
+> Spécification initiale conservée comme référence historique. L’état actuel, la destination Vaycode imposée et les limites de chaque fonction sont documentés dans [le catalogue](README.md).
+
 | | |
 |---|---|
 | **Projet** | Opale — application personnelle de gestion de patrimoine |

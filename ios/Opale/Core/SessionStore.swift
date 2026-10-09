@@ -17,10 +17,8 @@ final class SessionStore {
 
     private(set) var state: State = .loading
 
-    /// URL du backend — modifiable depuis l'écran de connexion (homelab).
-    var baseURLString: String {
-        didSet { UserDefaults.standard.set(baseURLString, forKey: "opale.baseURL") }
-    }
+    /// Backend imposé par l'application, indépendant des anciennes préférences.
+    let baseURLString: String
 
     /// Mode discret (EF-004) : flouter tous les montants d'un geste.
     var discreetMode = false { didSet {
@@ -59,9 +57,8 @@ final class SessionStore {
     init(networkSession: URLSession = .shared, clearCachedData: @escaping () -> Void = { WidgetBridge.clear(); DiskCache.clear() }) {
         self.networkSession = networkSession
         self.clearCachedData = clearCachedData
-        baseURLString = UserDefaults.standard.string(forKey: "opale.baseURL")
-            ?? "http://localhost:8080"
-        if let index = CommandLine.arguments.firstIndex(of: "--base-url"), CommandLine.arguments.count > index + 1 { baseURLString = CommandLine.arguments[index + 1] }
+        baseURLString = AppBackend.url.absoluteString
+        UserDefaults.standard.removeObject(forKey: "opale.baseURL")
         // Tests UI : démarrage à l'état déconnecté, déterministe.
         if CommandLine.arguments.contains("--reset-session") {
             Keychain.delete(Self.tokenKey)
@@ -70,7 +67,7 @@ final class SessionStore {
 
     /// Client API construit sur l'URL courante ; lit le jeton du trousseau.
     var api: APIClient {
-        let url = URL(string: baseURLString) ?? URL(string: "http://localhost:8080")!
+        let url = AppBackend.url
         let token = Keychain.sessionToken(forServer: baseURLString)
         return APIClient(baseURL: url, urlSession: networkSession) { token }
     }

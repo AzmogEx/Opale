@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 test('real API: three decision comparisons at 0/5/10 years and unavailable private label suggestion', async ({
 	page,
 	request

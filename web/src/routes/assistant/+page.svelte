@@ -155,7 +155,7 @@
 				<p>
 					Une analyse cloud peut recevoir une intention structurée et des agrégats financiers
 					arrondis. Ces données restent sensibles. Les textes libres de cette conversation restent
-					sur le serveur local.
+					sur le service Opale de Vaycode.
 				</p>
 				<div class="actions">
 					<button onclick={() => ask(pendingCloud!, true)}>Autoriser pour cette demande</button

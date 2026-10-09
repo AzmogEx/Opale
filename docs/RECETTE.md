@@ -1,10 +1,10 @@
 # Recette reproductible de livraison
 
-Recette du 8 octobre 2026, exclusivement sur données synthétiques. L’état par exigence est dans [LIVRAISON.md](LIVRAISON.md). Les preuves détaillées des clients se trouvent dans [iOS](../ios/DELIVERY.md) et [web](../web/DELIVERY.md).
+Recettes des 8 et 9 octobre 2026, exclusivement sur données synthétiques ; les sections datées distinguent leurs résultats. L’état par exigence est dans [LIVRAISON.md](LIVRAISON.md). Les preuves détaillées des clients se trouvent dans [iOS](DELIVERY-IOS.md) et [web](DELIVERY-WEB.md).
 
 ## Environnement utilisé
 
-Go 1.26.4, PostgreSQL 17.11, Node 22.16, Svelte 5/SvelteKit, Xcode 26.6 (17F113), XcodeGen 2.45.4, simulateur iOS 26. Aucun iPhone physique utilisé. Aucun fournisseur bancaire ou IA payant n’a reçu de données personnelles.
+Go 1.26.4, PostgreSQL 17.11, Node 22.16, Svelte 5/SvelteKit, Xcode 26.6 (17F113), XcodeGen 2.45.4, simulateur iOS 26. La recette initiale du 8 octobre n’utilisait pas d’iPhone physique ; le 9 octobre, la compilation, l’installation et le lancement ont été vérifiés sur l’iPhone autorisé. Aucun fournisseur bancaire ou IA payant n’a reçu de données personnelles.
 
 La première base jetable était dans Docker. Après l’indisponibilité de Docker Desktop, la recette a continué avec un cluster PostgreSQL natif distinct dans `/tmp/opale-delivery-postgres`, port 61547, base `opale_test`, utilisateur `opale_test`. L’API de recette écoute uniquement `127.0.0.1:58088` ; le web de développement est sur 5173. Ces chemins et ports décrivent cette session ; créer un autre environnement jetable pour une nouvelle exécution. Ne jamais employer une URL de base personnelle avec les tests. Les tests de migration créent et suppriment leurs propres bases auxiliaires et demandent le droit CREATEDB.
 
@@ -100,3 +100,24 @@ Suivre [EXPLOITATION.md](EXPLOITATION.md) : dump custom, somme SHA-256, restaura
 | Déploiement HTTPS/Compose | Fichiers, CI et procédure de récupération prêts | Docker fonctionnel ; domaine/certificat/stockage chiffré ; lancement sur environnement autorisé | Trois services prêts, données persistantes après redémarrage, export fonctionnel en lecture seule, API/DB non exposées, sauvegarde restaurable |
 
 Les cours publics BCE et CoinGecko ont été vérifiés réellement le 8 octobre 2026 sans données de portefeuille, via `OPALE_TEST_PUBLIC_QUOTES=1 go test ./internal/quotes -run TestPublicProvidersLive -v`. La BCE retournait une publication du7octobre2026. Ce test est opt-in car dépendant du réseau public et de ses limites.
+
+## Backend imposé et catalogue documentaire — 9 octobre 2026
+
+`python3 scripts/check_docs.py` vérifie les **30 fiches, 158 routes HTTP et 90 écrans/composants** du catalogue explicite, ses sources et les liens locaux. Ce contrôle est un job CI dédié. Il détecte les points d’entrée nouveaux non documentés ; la revue du contenu reste nécessaire pour les modifications internes.
+
+Sur simulateur iOS, build-for-testing puis test-without-building ont validé **34 tests** (présentation, isolation, formulaire initial, outils et parcours), dont l’ancienne préférence de serveur et les dérogations de boucle locale. Le client physique a été signé, installé et lancé avec son adresse Vaycode imposée.
+
+Sur le web : `npm run check`, `npm test` (13 unités) et `npm run build`. Les tests navigateur incluent une préférence étrangère, son jeton et l’absence de champ serveur. Les sessions nouvelles sont liées explicitement à Vaycode. Les tests d’intégration utilisent exclusivement une API/PostgreSQL jetables ; le navigateur intercepte l’URL Vaycode avec `tests/integration/fixtures.ts`, jamais avec une option dans le produit.
+
+Exemple reproductible pour une API jetable déjà prête sur 58088, coffre configuré :
+
+```bash
+# Terminal 1, depuis web/ : proxy réservé aux requêtes de recette interceptées
+OPALE_API_URL=http://127.0.0.1:58088 npm run dev -- --host 127.0.0.1
+# Terminal 2, depuis web/ :
+OPALE_WEB_URL=http://127.0.0.1:5173 npm run test:e2e:integration
+```
+
+Un navigateur ouvert normalement sur la SPA utilise Vaycode ; utiliser uniquement les fixtures pour écrire sur la pile locale. Les profils synthétiques propres aux tests sont supprimés à la fin.
+
+La première passe API réelle a passé trois parcours et échoué sur le CCA : des détails chargés tardivement remplaçaient une saisie par zéro. Le formulaire patrimonial attend maintenant ses données avant de s’ouvrir, ignore les réponses obsolètes et propose de réessayer si le chargement échoue. `asset-details.spec.ts` maintient volontairement une réponse en attente pour vérifier cette protection et le montant exact. Les succès finaux sont consignés dans [la livraison web](DELIVERY-WEB.md), sans présenter cette première passe comme verte.

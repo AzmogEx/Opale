@@ -6,6 +6,14 @@ on:
   pull_request:
 
 jobs:
+  documentation:
+    name: Documentation des fonctionnalités
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Vérifier catalogue, routes, écrans et liens
+        run: python3 scripts/check_docs.py
+
   backend:
     name: Backend Go
     runs-on: ubuntu-latest

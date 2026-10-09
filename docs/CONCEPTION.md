@@ -1,6 +1,6 @@
 # Opale — Conception complète
 
-> Document de vision et de conception initiale. L’état effectivement livré, les décisions affinées et les limites de validation au 8 octobre 2026 sont décrits dans [LIVRAISON.md](LIVRAISON.md), [DATA-MODEL.md](DATA-MODEL.md) et [RECETTE.md](RECETTE.md). Les formulations prospectives ci-dessous ne constituent pas des preuves de fonctionnement.
+> Document de vision et de conception initiale. Le backend produit est désormais imposé sur Vaycode ; le parcours et les fonctions réellement livrées sont dans [le catalogue actuel](README.md). L’état effectivement livré, les décisions affinées et les limites de validation au 8 octobre 2026 sont décrits dans [LIVRAISON.md](LIVRAISON.md), [DATA-MODEL.md](DATA-MODEL.md) et [RECETTE.md](RECETTE.md). Les formulations prospectives ci-dessous ne constituent pas des preuves de fonctionnement.
 
 > **Opale** — Application personnelle de **gestion de patrimoine** (pas un simple
 > budget), belle, intelligente et privée, auto-hébergée sur le homelab.

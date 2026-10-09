@@ -57,7 +57,7 @@ targets:
         CFBundleDevelopmentRegion: fr
         CFBundleLocalizations: [fr]
         UILaunchScreen: {}
-        # Autorise l'API locale (simulateur → localhost, homelab en LAN).
+        # Recettes locales sur simulateur ; sur iPhone, AppBackend impose HTTPS Vaycode.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         # Face ID (ENF-004) et rafraîchissement d'alertes en arrière-plan.

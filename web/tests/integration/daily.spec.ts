@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 // Requires the disposable integration API behind Vite's /v1 proxy. Never use a personal instance.
 test('real API: create profile, initial valuation, transaction import/edit/filter/page, export and expiry', async ({
 	page,

@@ -2,7 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// Coffre-fort patrimonial (EF-064) : documents chiffrés sur le homelab
-/// (AES-256-GCM côté serveur — niveau N3 : ne quitte jamais la maison).
+/// (AES-256-GCM côté serveur — jamais transmis aux fournisseurs IA).
 struct VaultView: View {
     @Environment(SessionStore.self) private var session
 

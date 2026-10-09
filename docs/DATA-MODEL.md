@@ -1,6 +1,6 @@
 # Opale — Modèle de données
 
-État livré le 9 octobre 2026, migrations `0001` à `0024`. Le schéma exact et ses contraintes sont définis dans `backend/internal/migrations/`. Les conventions de calcul sont détaillées dans [CONVENTIONS-FINANCIERES.md](CONVENTIONS-FINANCIERES.md), les validations dans [LIVRAISON.md](LIVRAISON.md).
+État livré le 9 octobre 2026, migrations `0001` à `0025`. Le schéma exact et ses contraintes sont définis dans `backend/internal/migrations/`. Les conventions de calcul sont détaillées dans [CONVENTIONS-FINANCIERES.md](CONVENTIONS-FINANCIERES.md), les validations dans [LIVRAISON.md](LIVRAISON.md).
 
 Les montants monétaires sont des `BIGINT` en **unités mineures de la devise native** : EUR deux décimales, JPY zéro, KWD trois. Le nom historique `*_cents` ne signifie donc pas systématiquement centimes EUR. `currency_exponent` et le type Go `money.Cents` contrôlent conversions, arrondis et débordements. Les taux de change et quantités utilisent leurs précisions explicites ; aucun taux manquant n’est remplacé par une parité implicite.
 
@@ -13,6 +13,7 @@ Les montants monétaires sont des `BIGINT` en **unités mineures de la devise na
 | `transactions`, `categories`, `merchant_rules` | Compte, montant natif, date civile, libellés actuel/brut, catégorie et règle apprise ; type de flux, état bancaire, virement lié et dette remboursée explicites |
 | `imported_operations` | Identité durable d’une opération source, indépendante des lignes visibles après ventilation ou suppression |
 | `envelopes`, `goals` | Budgets par catégorie et objectifs avec rythme d’épargne affecté ; allocations sérialisées et plafonnées à la capacité observée |
+| `profile_journey` | Progression du parcours, étapes vérifiées/passées, budget variable et révision, séparés par profil ; export/reset inclus |
 | `profile_onboarding` | Brouillon/reprise, révision et résultat atomique de la configuration initiale, isolés par profil |
 | `financial_contracts`, `contract_prices`, `contract_price_dismissals` | Suivi des engagements, compte/marchand explicites, tarifs historisés et observation de hausse confirmée ou ignorée |
 | `variable_incomes` | Fourchette native minimum/habituel/maximum et choix explicite de prévision ; règle calendrier liée facultative |
@@ -47,3 +48,5 @@ La création avec valeur initiale, les virements et leurs frais, la ventilation,
 Les migrations sont sérialisées et appliquées dans une transaction. Une incohérence historique de propriétaire ou d’échelle monétaire bloque la migration sans suppression ni réattribution automatique. Le retour arrière de `0021` refuse les règles trimestrielles existantes ; pour les migrations destructrices, la récupération passe par une sauvegarde restaurée dans une nouvelle base, selon [EXPLOITATION.md](EXPLOITATION.md).
 
 La migration `0024` reprend les abonnements déclarés par un onboarding terminé en réutilisant leurs règles. Les modifications d’un tarif ou d’une hypothèse clôturent la série précédente et créent sa suite sans réécrire les paiements. Les révisions concurrentes sont refusées. La confirmation d’une hausse issue d’un prélèvement le jour de l’échéance rapproche ce mouvement, ou exclut la nouvelle occurrence s’il est déjà rapproché, pour éviter un double comptage. Contrats, prix, observations ignorées et revenus font partie de l’export privé et de la réinitialisation. Le retour arrière refuse la présence de contrats/revenus.
+
+La migration `0025` ajoute la progression du parcours sans recopier les données financières. En l’absence de ligne de parcours, le budget d’un onboarding terminé est repris comme hypothèse, sans déclarer ses étapes vérifiées. Les mises à jour sont sérialisées par profil et refusent une révision périmée ; les calculs de mois type restent des hypothèses, sans création de transactions réalisées.

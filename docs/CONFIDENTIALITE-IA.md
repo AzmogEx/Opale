@@ -1,6 +1,6 @@
 # Contrat de confidentialité et assistant
 
-Version du 9 octobre 2026. Le moteur financier calcule ; les modèles sélectionnent ou interprètent, sans fabriquer les chiffres affichés.
+Version du 9 octobre 2026. Le backend des clients est imposé sur `https://opale.vaycode.com` : les données financières et questions sont traitées par le service Vaycode, indépendamment du fournisseur IA. Le moteur financier calcule ; les modèles sélectionnent ou interprètent, sans fabriquer les chiffres affichés.
 
 ## Sortie cloud autorisée
 

@@ -67,13 +67,17 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-`npm run test:e2e:integration` nécessite une **API et une base jetables** derrière le proxy Vite ou nginx (coffre configuré) ; ces tests créent puis suppriment leurs profils. Ne jamais utiliser une instance personnelle. Le workflow CI configure Go/race avec PostgreSQL, Svelte/check/build, tests navigateur et pile Compose, sauvegarde/restauration isolée, tests unitaires iOS sur simulateur signé localement. Les résultats distants sont disponibles dans [GitHub Actions](https://github.com/AzmogEx/Opale/actions) ; les vérifications locales et leurs limites figurent dans la recette.
+`npm run test:e2e:integration` nécessite une **API et une base jetables** derrière le proxy Vite ou nginx en boucle locale (coffre configuré). Le navigateur de recette intercepte le domaine Vaycode et relaie vers cette pile locale ; ces tests créent puis suppriment leurs profils. Ne jamais utiliser une instance personnelle. Le workflow CI configure Go/race avec PostgreSQL, Svelte/check/build, tests navigateur et pile Compose, sauvegarde/restauration isolée, tests unitaires iOS sur simulateur signé localement. Les résultats distants sont disponibles dans [GitHub Actions](https://github.com/AzmogEx/Opale/actions) ; les vérifications locales et leurs limites figurent dans la recette.
 
 ## Documents et organisation
 
+**[Index complet de documentation](docs/README.md)** : une fiche par module, toutes les routes API et les écrans associés. Chaque évolution doit mettre sa fiche à jour ; le catalogue est contrôlé en CI.
+
+Les clients iPhone et web utilisent exclusivement `https://opale.vaycode.com`, sans choix de serveur. Les préférences d’adresse anciennes sont ignorées.
+
 - [Matrice complète de livraison](docs/LIVRAISON.md), [recette reproductible](docs/RECETTE.md), [conventions financières](docs/CONVENTIONS-FINANCIERES.md), [confidentialité IA](docs/CONFIDENTIALITE-IA.md).
 - [Cahier des charges](docs/CAHIER-DES-CHARGES.md), [conception](docs/CONCEPTION.md), [modèle de données](docs/DATA-MODEL.md).
-- [Livraison web et preuves](web/DELIVERY.md), [livraison iOS et preuves](ios/DELIVERY.md), [livraison backend](docs/DELIVERY-BACKEND.md), [guide web](web/README.md).
+- [Livraison web et preuves](docs/DELIVERY-WEB.md), [livraison iOS et preuves](docs/DELIVERY-IOS.md), [livraison backend](docs/DELIVERY-BACKEND.md), [guide web](web/README.md).
 - [Installation, migration, sauvegarde, restauration, secrets et supervision](docs/EXPLOITATION.md).
 - `backend/` : API et moteur déterministe ; `web/` : SPA ; `ios/` : SwiftUI ; `scripts/` : exploitation ; `.github/workflows/ci.yml` : vérifications.
 
